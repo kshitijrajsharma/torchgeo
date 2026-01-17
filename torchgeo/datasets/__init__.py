@@ -123,6 +123,7 @@ from .nccm import NCCM
 from .nlcd import NLCD
 from .openbuildings import OpenBuildings
 from .openstreetmap import OpenStreetMap
+from .openaerialmap import OpenAerialMap
 from .oscd import OSCD
 from .pastis import PASTIS
 from .patternnet import PatternNet
@@ -312,6 +313,7 @@ __all__ = (
     'NonGeoClassificationDataset',
     'NonGeoDataset',
     'OpenBuildings',
+    'OpenAerialMap',
     'OpenStreetMap',
     'PatternNet',
     'Potsdam2D',
