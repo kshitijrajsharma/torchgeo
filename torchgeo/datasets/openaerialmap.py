@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from pyproj import CRS
 from rasterio.crs import CRS as RioCRS
 from rasterio.transform import from_bounds
+from tqdm.asyncio import tqdm_asyncio
 
 from .geo import RasterDataset
 from .utils import Path, Sample
@@ -86,17 +87,21 @@ class OpenAerialMap(RasterDataset):
     .. versionadded:: 0.8
     """
 
-    _stac_api_url: ClassVar[str] = 'https://api.imagery.hotosm.org/stac'
+    _stac_api_url: ClassVar[str] = "https://api.imagery.hotosm.org/stac"
 
-    filename_glob = 'OAM-*.tif'
-    filename_regex = r'^OAM-.*\.tif$'
+    filename_glob = "OAM-*.tif"
+    filename_regex = r"^OAM-.*\.tif$"
 
-    all_bands = ('R', 'G', 'B') # Just placing it in case in future OAM supports other bands
-    rgb_bands = ('R', 'G', 'B')
+    all_bands = (
+        "R",
+        "G",
+        "B",
+    )  # Just placing it in case in future OAM supports other bands
+    rgb_bands = ("R", "G", "B")
 
     def __init__(
         self,
-        paths: Path | Iterable[Path] = 'data',
+        paths: Path | Iterable[Path] = "data",
         crs: CRS | None = None,
         res: float | tuple[float, float] | None = None,
         bbox: tuple[float, float, float, float] | None = None,
@@ -105,13 +110,14 @@ class OpenAerialMap(RasterDataset):
         transforms: Callable[[Sample], Sample] | None = None,
         cache: bool = True,
         download: bool = False,
+        image_id: str | None = None,  #
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
 
         Args:
             paths: one or more root directories to search or files to load
             crs: :term:`coordinate reference system (CRS)` to warp to
-                (defaults to EPSG:4326)
+                (defaults to EPSG:3857)
             res: resolution of the dataset in units of CRS
                 (defaults to resolution of first file found)
             bbox: bounding box for STAC query as (xmin, ymin, xmax, ymax) in EPSG:4326.
@@ -127,6 +133,7 @@ class OpenAerialMap(RasterDataset):
                 automatically via the crs parameter.
             cache: if True, cache file handle to speed up repeated sampling
             download: if True, download imagery from STAC API based on bbox
+            image_id: optional STAC item ID to download specific imagery
 
         Raises:
             DatasetNotFoundError: If dataset is not found and download=False.
@@ -137,16 +144,16 @@ class OpenAerialMap(RasterDataset):
         self.zoom = zoom
         self.max_items = max_items
         self.download = download
-
+        self.image_id = image_id
         if download:
             if bbox is None:
-                raise ValueError('bbox must be provided when download=True')
-            if not 1 <= zoom <= 22:
-                raise ValueError(f'zoom must be between 1 and 22, got {zoom}')
+                raise ValueError("bbox must be provided when download=True")
+            if not 6 <= zoom <= 22:
+                raise ValueError(f"zoom must be between 6 and 22, got {zoom}")
             self._download()
 
         super().__init__(
-            paths, crs or CRS.from_epsg(4326), res, transforms=transforms, cache=cache
+            paths, crs or CRS.from_epsg(3857), res, transforms=transforms, cache=cache
         )
 
     def _download(self) -> None:
@@ -163,58 +170,141 @@ class OpenAerialMap(RasterDataset):
 
         os.makedirs(self.paths, exist_ok=True)
 
-        # Query STAC API for imagery
-        tms_url = self._query_stac_for_tms()
+        if self.image_id is not None:
+            print(f"Querying STAC API for image ID {self.image_id}...")
+            tms_url = self._query_stac_by_id()
+        else:
+            tms_url = self._query_stac_for_tms()
         if not tms_url:
             warnings.warn(
-                f'No TMS imagery found for bbox {self.bbox}. '
-                'Try a different area or check OpenAerialMap coverage.',
+                f"No TMS imagery found for bbox {self.bbox}. "
+                "Try a different area or check OpenAerialMap coverage.",
                 UserWarning,
                 stacklevel=2,
             )
             # create placeholder to avoid DatasetNotFoundError
-            placeholder_path = os.path.join(self.paths, '.downloaded')
-            with open(placeholder_path, 'w') as f:
-                f.write('Download attempted but no TMS URLs found.\n')
+            placeholder_path = os.path.join(self.paths, ".downloaded")
+            with open(placeholder_path, "w") as f:
+                f.write("Download attempted but no TMS URLs found.\n")
             return
 
         # calculate tiles for bbox at specified zoom using mercantile
-        tiles = list(mercantile.tiles(*self.bbox, self.zoom))
+        tiles = list(mercantile.tiles(*self.bbox, self.zoom, truncate=True))
+        # print(tiles)
 
         asyncio.run(self._download_tiles_async(tms_url, tiles))
 
-    def _query_stac_for_tms(self) -> str | None:
-        """Query STAC API and extract TMS URL.
+    def _query_stac_by_id(self) -> str | None:
+        """Query STAC API by ID and extract TMS URL.
 
         Returns:
-            TMS URL template from most recent imagery, or None if not found
+            TMS URL template from the specific imagery, or None if not found
         """
-        search_url = f'{self._stac_api_url}/search'
-        params = {
-            'bbox': list(self.bbox),
-            'limit': self.max_items,
-        }
+        search_url = f"{self._stac_api_url}/search"
+        print(search_url)
+        params = {"ids": [self.image_id]}
 
         try:
             response = requests.post(search_url, json=params, timeout=30)
             response.raise_for_status()
             data = response.json()
         except Exception as e:
-            raise RuntimeError(
-                f'Failed to query STAC API at {search_url}: {e}'
-            ) from e
+            raise RuntimeError(f"Failed to query STAC API at {search_url}: {e}") from e
 
-        features = data.get('features', [])
+        features = data.get("features", [])
+        print(f"Found {len(features)} STAC features")
         if not features:
             return None
 
-        # Extract TMS URL from features (most recent first)
+        # Process the single feature found
+        feature = features[0]
+
+        print(feature["properties"].keys())
+        print(
+            f"found {feature['id']} : {feature['properties']['title']}, with gsd {feature['properties']['gsd']}"
+        )
+        assets = feature.get("assets", {})
+        print(assets.keys())
+        thumbnail = assets.get("thumbnail", {})
+        print(thumbnail.get("href", ""))
+
+        if "metadata" in assets:
+            print(assets["metadata"].keys())
+            href = assets["metadata"].get("href", "")
+            try:
+                response = requests.get(href, timeout=10)
+                response.raise_for_status()
+                metadata = response.json()
+            except Exception as e:
+                print(f"Failed to fetch metadata from {href}: {e}")
+                metadata = None
+            print(metadata)
+            print(metadata.keys())
+            metadata_properties = metadata.get("properties", {})
+            tms = metadata_properties.get("tms", {})
+            print(tms)
+            if "{z}" in tms and "{x}" in tms and "{y}" in tms:
+                return tms
+        return None
+
+    def _query_stac_for_tms(
+        self,
+    ) -> str | None:  # TODO : add single item search as well
+        """Query STAC API and extract TMS URL.
+
+        Returns:
+            TMS URL template from most recent imagery, or None if not found
+        """
+        search_url = f"{self._stac_api_url}/search"
+        print(search_url)
+        params = {
+            "bbox": list(self.bbox),
+            "limit": self.max_items,  # TODO : Add sorting here
+        }
+
+        try:
+            response = requests.post(search_url, json=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            # print(data)
+        except Exception as e:
+            raise RuntimeError(f"Failed to query STAC API at {search_url}: {e}") from e
+
+        features = data.get("features", [])
+        # print(features)
+        print(f"Found {len(features)} STAC features")
+        if not features:
+            return None
+
         for feature in features:
-            assets = feature.get('assets', {})
-            if 'tiles' in assets:
-                href = assets['tiles'].get('href', '')
-                if '{z}' in href and '{x}' in href and '{y}' in href:
-                    return href
+            # print(feature)
+            print(feature["properties"].keys())
+            print(
+                f"found {feature['id']} : {feature['properties']['title']}, with gsd {feature['properties']['gsd']}"
+            )
+            assets = feature.get("assets", {})
+            # print(assets)
+            print(assets.keys())
+            thumbnail = assets.get("thumbnail", {})
+            print(thumbnail.get("href", ""))
+
+            if "metadata" in assets:
+                print(assets["metadata"].keys())
+                href = assets["metadata"].get("href", "")
+                try:
+                    response = requests.get(href, timeout=10)
+                    response.raise_for_status()
+                    metadata = response.json()
+                except Exception as e:
+                    print(f"Failed to fetch metadata from {href}: {e}")
+                    metadata = None
+                # print(metadata)
+                print(metadata.keys())
+                metadata_properties = metadata.get("properties", {})
+                tms = metadata_properties.get("tms", {})
+                print(tms)
+                if "{z}" in tms and "{x}" in tms and "{y}" in tms:
+                    return tms
 
         return None
 
@@ -248,12 +338,11 @@ class OpenAerialMap(RasterDataset):
         """
         assert isinstance(self.paths, str | os.PathLike)
 
-        url = tms_url.replace('{z}', str(tile.z))
-        url = url.replace('{x}', str(tile.x))
-        url = url.replace('{y}', str(tile.y))
+        url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
+        # print(f"Downloading tile {tile} from {url}...")
 
         # Output filename following convention
-        filename = f'OAM-{tile.x}-{tile.y}-{tile.z}.tif'
+        filename = f"OAM-{tile.x}-{tile.y}-{tile.z}.tif"
         filepath = os.path.join(self.paths, filename)
 
         if os.path.exists(filepath):
@@ -263,7 +352,7 @@ class OpenAerialMap(RasterDataset):
             async with session.get(url, timeout=30) as response:
                 if response.status != 200:
                     warnings.warn(
-                        f'Failed to download tile {tile}: HTTP {response.status}',
+                        f"Failed to download tile {tile}: HTTP {response.status}",
                         UserWarning,
                         stacklevel=2,
                     )
@@ -271,14 +360,14 @@ class OpenAerialMap(RasterDataset):
 
                 tile_data = await response.read()
 
-                with open(filepath, 'wb') as f:
+                with open(filepath, "wb") as f:
                     f.write(tile_data)
 
                 self._georeference_tile(filepath, tile)
 
         except (aiohttp.ClientError, OSError) as e:
             warnings.warn(
-                f'Error downloading tile {tile}: {e}',
+                f"Error downloading tile {tile}: {e}",
                 UserWarning,
                 stacklevel=2,
             )
@@ -294,23 +383,27 @@ class OpenAerialMap(RasterDataset):
         bounds = mercantile.bounds(tile)
 
         try:
-            with rasterio.open(filepath, 'r+') as dataset:
+            with rasterio.open(filepath, "r+") as dataset:
                 transform = from_bounds(
-                    bounds.west, bounds.south, bounds.east, bounds.north,
-                    dataset.width, dataset.height
+                    bounds.west,
+                    bounds.south,
+                    bounds.east,
+                    bounds.north,
+                    dataset.width,
+                    dataset.height,
                 )
                 dataset.transform = transform
                 dataset.crs = RioCRS.from_epsg(4326)
                 dataset.update_tags(
-                    ns='rio_georeference',
-                    georeferencing_applied='True',
+                    ns="rio_georeference",
+                    georeferencing_applied="True",
                     tile_x=tile.x,
                     tile_y=tile.y,
                     tile_z=tile.z,
                 )
         except rasterio.errors.RasterioIOError:
             warnings.warn(
-                f'Could not georeference {filepath}. Not a valid raster file.',
+                f"Could not georeference {filepath}. Not a valid raster file.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -328,7 +421,7 @@ class OpenAerialMap(RasterDataset):
         Returns:
             a matplotlib Figure with the rendered sample
         """
-        image = sample['image']
+        image = sample["image"]
 
         if image.shape[0] >= 3:
             # RGB or more bands - take first 3 for RGB
@@ -345,11 +438,11 @@ class OpenAerialMap(RasterDataset):
         if rgb.ndim == 3:
             ax.imshow(rgb)
         else:
-            ax.imshow(rgb, cmap='gray')
+            ax.imshow(rgb, cmap="gray")
 
-        ax.axis('off')
+        ax.axis("off")
         if show_titles:
-            ax.set_title('Image')
+            ax.set_title("Image")
 
         if suptitle is not None:
             plt.suptitle(suptitle)
