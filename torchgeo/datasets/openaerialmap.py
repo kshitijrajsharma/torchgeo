@@ -97,6 +97,7 @@ class OpenAerialMap(RasterDataset):
         download: bool = False,
         search: bool = False,
         image_id: str | None = None,
+        tile_size: int = 256,
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
 
@@ -131,7 +132,10 @@ class OpenAerialMap(RasterDataset):
         self.download = download
         self.image_id = image_id
         self.search_results = None
-
+        self.tile_size = tile_size
+        
+        if tile_size not in [256,512]:
+            raise ValueError("only 256 and 512 are supported for tile_size")
         if search:
             if self.bbox is None:
                 raise ValueError("bbox must be provided when search=True")
@@ -173,8 +177,9 @@ class OpenAerialMap(RasterDataset):
         df = pd.DataFrame([
             {
                 "ID": f["id"],
-                "Date": (f["properties"].get("acquisition_start") or f["properties"].get("created") or "")[:10],
+                "Date": (f["properties"].get("start_datetime") or f["properties"].get("created") or ""),
                 "Platform": f["properties"].get("oam:platform_type"),
+                "Provider": f["properties"].get("oam:producer_name"),
                 "GSD": f["properties"].get("gsd"),
                 "Title": f["properties"].get("title"),
             }
@@ -263,30 +268,22 @@ class OpenAerialMap(RasterDataset):
 
         for feature in features:
             assets = feature.get("assets", {})
-            metadata = assets.get("metadata", {})
-            href = metadata.get("href")
+            visual = assets.get("visual", {})
+            visual_source = visual.get("href")
+            props = feature.get("properties", {})
+        
+        
+            print(f"Using OpenAerialMap image: {props.get('title', 'Unknown')}")
+            print(f"  ID: {feature.get('id', 'Unknown')}")
+            print(f"  Date: {props.get('start_datetime', 'Unknown')}")
+            print(f"  Platform: {props.get('oam:platform_type', 'Unknown')}")
+            print(f"  Provider: {props.get('oam:producer_name', 'Unknown')}")
+            print(f"  GSD: {props.get('gsd', 'Unknown')}")
+            print(f"  License: {props.get('license', 'Unknown')}")
 
-            if not href:
-                continue
-
-            try:
-                meta_response = requests.get(href, timeout=10)
-                meta_response.raise_for_status()
-                meta_json = meta_response.json()
-
-                tms = meta_json.get("properties", {}).get("tms")
-                if tms and "{z}" in tms and "{x}" in tms and "{y}" in tms:
-                    props = feature.get("properties", {})
-                    print(f"Using OpenAerialMap image: {props.get('title', 'Unknown')}")
-                    print(f"  ID: {feature.get('id', 'Unknown')}")
-                    print(f"  Platform: {props.get('oam:platform_type', 'Unknown')}")
-                    print(f"  GSD: {props.get('gsd', 'Unknown')}")
-                    print(f"  License: {props.get('license', 'Unknown')}")
-                    return tms
-
-            except requests.RequestException:
-                continue
-
+            tile_url = f"https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@{'1x' if self.tile_size == 256 else '2x'}?url={visual_source}"
+            return tile_url
+        
         return None
 
     async def _download_tiles_async(
@@ -323,7 +320,6 @@ class OpenAerialMap(RasterDataset):
         url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
         filename = f"OAM-{tile.x}-{tile.y}-{tile.z}.tif"
         filepath = os.path.join(self.paths, filename)
-
         if os.path.exists(filepath):
             return
 
