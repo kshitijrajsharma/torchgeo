@@ -412,3 +412,4 @@ class OpenAerialMap(RasterDataset):
             plt.suptitle(suptitle)
 
         return fig
+    
