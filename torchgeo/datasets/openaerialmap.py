@@ -68,7 +68,7 @@ class OpenAerialMap(RasterDataset):
             paths='data/openaerial',
             bbox=(lon_min, lat_min, lon_max, lat_max),
             zoom=19,
-            download=True
+            download=True,
         )
 
     If you use this dataset in your research, please cite OpenAerialMap:
@@ -76,18 +76,20 @@ class OpenAerialMap(RasterDataset):
     * https://openaerialmap.org/
     """
 
-    _stac_api_url: ClassVar[str] = "https://api.imagery.hotosm.org/stac"
-    _tile_source_url: ClassVar[str] = "https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{z}/{x}/{y}@{scale}x?url={source}"
+    _stac_api_url: ClassVar[str] = 'https://api.imagery.hotosm.org/stac'
+    _tile_source_url: ClassVar[str] = (
+        'https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{z}/{x}/{y}@{scale}x?url={source}'
+    )
 
-    filename_glob = "OAM-*.tif"
-    filename_regex = r"^OAM-.*\.tif$"
+    filename_glob = 'OAM-*.tif'
+    filename_regex = r'^OAM-.*\.tif$'
 
-    all_bands = ("R", "G", "B")
-    rgb_bands = ("R", "G", "B")
+    all_bands = ('R', 'G', 'B')
+    rgb_bands = ('R', 'G', 'B')
 
     def __init__(
         self,
-        paths: Path | Iterable[Path] = "data",
+        paths: Path | Iterable[Path] = 'data',
         crs: CRS | None = None,
         res: float | tuple[float, float] | None = None,
         bbox: tuple[float, float, float, float] | None = None,
@@ -137,11 +139,11 @@ class OpenAerialMap(RasterDataset):
         self.tile_size = tile_size
 
         if tile_size not in (256, 512):
-            raise ValueError("only 256 and 512 are supported for tile_size")
+            raise ValueError('only 256 and 512 are supported for tile_size')
 
         if search:
             if self.bbox is None:
-                raise ValueError("bbox must be provided when search=True")
+                raise ValueError('bbox must be provided when search=True')
             self._search_stac()
             # If user only wants to search, return early
             if not download:
@@ -149,9 +151,9 @@ class OpenAerialMap(RasterDataset):
 
         if download:
             if bbox is None and image_id is None:
-                raise ValueError("bbox or image_id must be provided when download=True")
+                raise ValueError('bbox or image_id must be provided when download=True')
             if not 6 <= zoom <= 22:
-                raise ValueError(f"zoom must be between 6 and 22, got {zoom}")
+                raise ValueError(f'zoom must be between 6 and 22, got {zoom}')
             self._download()
 
         # If 'crs' is None, it defaults to EPSG:3857 (Web Mercator)
@@ -164,34 +166,40 @@ class OpenAerialMap(RasterDataset):
         assert self.bbox is not None
         try:
             resp = requests.post(
-                f"{self._stac_api_url}/search",
-                json={"bbox": list(self.bbox), "limit": max(self.max_items, 20)},
+                f'{self._stac_api_url}/search',
+                json={'bbox': list(self.bbox), 'limit': max(self.max_items, 20)},
                 timeout=30,
             )
             resp.raise_for_status()
         except requests.RequestException as e:
-            warnings.warn(f"STAC search failed: {e}", UserWarning)
+            warnings.warn(f'STAC search failed: {e}', UserWarning)
             return
 
-        features = resp.json().get("features", [])
+        features = resp.json().get('features', [])
         if not features:
-            print("No images found in this bounding box.")
+            print('No images found in this bounding box.')
             return
 
-        self.search_results = pd.DataFrame([
-            {
-                "ID": f["id"],
-                "Date": (f["properties"].get("start_datetime") or f["properties"].get("created") or ""),
-                "Platform": f["properties"].get("oam:platform_type"),
-                "Provider": f["properties"].get("oam:producer_name"),
-                "GSD": f["properties"].get("gsd"),
-                "Title": f["properties"].get("title"),
-            }
-            for f in features
-        ])
+        self.search_results = pd.DataFrame(
+            [
+                {
+                    'ID': f['id'],
+                    'Date': (
+                        f['properties'].get('start_datetime')
+                        or f['properties'].get('created')
+                        or ''
+                    ),
+                    'Platform': f['properties'].get('oam:platform_type'),
+                    'Provider': f['properties'].get('oam:producer_name'),
+                    'GSD': f['properties'].get('gsd'),
+                    'Title': f['properties'].get('title'),
+                }
+                for f in features
+            ]
+        )
 
-        print(f"Found {len(features)} available images")
-        print("\nUse .search_results to view.\n")
+        print(f'Found {len(features)} available images')
+        print('\nUse .search_results to view.\n')
 
     def _download(self) -> None:
         """Download imagery from STAC API and TMS endpoints.
@@ -210,19 +218,19 @@ class OpenAerialMap(RasterDataset):
         tms_url = self._fetch_tms_url()
         if not tms_url:
             warnings.warn(
-                f"No TMS imagery found for bbox {self.bbox} or ID {self.image_id}. "
-                "Try a different area or check OpenAerialMap coverage.",
+                f'No TMS imagery found for bbox {self.bbox} or ID {self.image_id}. '
+                'Try a different area or check OpenAerialMap coverage.',
                 UserWarning,
                 stacklevel=2,
             )
             # create placeholder to avoid DatasetNotFoundError
-            with open(os.path.join(root, ".downloaded"), "w") as f:
-                f.write("Download attempted but no TMS URLs found.\n")
+            with open(os.path.join(root, '.downloaded'), 'w') as f:
+                f.write('Download attempted but no TMS URLs found.\n')
             return
 
         if self.bbox is None:
             warnings.warn(
-                "Bounding box (bbox) is required to calculate tiles, even when image_id is provided.",
+                'Bounding box (bbox) is required to calculate tiles, even when image_id is provided.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -250,49 +258,53 @@ class OpenAerialMap(RasterDataset):
         Returns:
             TMS URL template from the specific imagery, or None if not found
         """
-        params: dict[str, Any] = {"limit": self.max_items}
+        params: dict[str, Any] = {'limit': self.max_items}
 
         if self.image_id:
-            params["ids"] = [self.image_id]
+            params['ids'] = [self.image_id]
         elif self.bbox:
-            params["bbox"] = list(self.bbox)
+            params['bbox'] = list(self.bbox)
 
         try:
-            response = requests.post(f"{self._stac_api_url}/search", json=params, timeout=30)
+            response = requests.post(
+                f'{self._stac_api_url}/search', json=params, timeout=30
+            )
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-           raise RuntimeError(f"Failed to query STAC API: {e}") from e
+            raise RuntimeError(f'Failed to query STAC API: {e}') from e
         except (ValueError, KeyError) as e:
             # JSON parsing or unexpected response structure
-            raise RuntimeError(f"Failed to query STAC API: {e}") from e
+            raise RuntimeError(f'Failed to query STAC API: {e}') from e
         except Exception as e:
-            raise RuntimeError(f"Failed to query STAC API: {e}") from e
-        
-        features = data.get("features", [])
+            raise RuntimeError(f'Failed to query STAC API: {e}') from e
+
+        features = data.get('features', [])
         if not features:
             return None
 
         # Use the first feature available
         feature = features[0]
-        props = feature.get("properties", {})
-        visual_source = feature.get("assets", {}).get("visual", {}).get("href")
+        props = feature.get('properties', {})
+        visual_source = feature.get('assets', {}).get('visual', {}).get('href')
 
-        print(f"Using OpenAerialMap image: {props.get('title', 'Unknown')}")
-        print(f"  ID: {feature.get('id', 'Unknown')}")
-        print(f"  Date: {props.get('start_datetime', 'Unknown')}")
-        print(f"  Platform: {props.get('oam:platform_type', 'Unknown')}")
-        print(f"  Provider: {props.get('oam:producer_name', 'Unknown')}")
-        print(f"  GSD: {props.get('gsd', 'Unknown')}")
-        print(f"  License: {props.get('license', 'Unknown')}")
+        print(f'Using OpenAerialMap image: {props.get("title", "Unknown")}')
+        print(f'  ID: {feature.get("id", "Unknown")}')
+        print(f'  Date: {props.get("start_datetime", "Unknown")}')
+        print(f'  Platform: {props.get("oam:platform_type", "Unknown")}')
+        print(f'  Provider: {props.get("oam:producer_name", "Unknown")}')
+        print(f'  GSD: {props.get("gsd", "Unknown")}')
+        print(f'  License: {props.get("license", "Unknown")}')
 
         if not visual_source:
             return None
 
         return self._tile_source_url.format(
-            z="{z}", x="{x}", y="{y}",
+            z='{z}',
+            x='{x}',
+            y='{y}',
             scale=1 if self.tile_size == 256 else 2,
-            source=visual_source
+            source=visual_source,
         )
 
     async def _download_tiles_async(
@@ -309,13 +321,10 @@ class OpenAerialMap(RasterDataset):
                 self._download_single_tile(session, tms_url, tile) for tile in tiles
             ]
 
-            await tqdm_asyncio.gather(*tasks, desc="Downloading Tiles", leave=False)
+            await tqdm_asyncio.gather(*tasks, desc='Downloading Tiles', leave=False)
 
     async def _download_single_tile(
-        self,
-        session: aiohttp.ClientSession,
-        tms_url: str,
-        tile: mercantile.Tile,
+        self, session: aiohttp.ClientSession, tms_url: str, tile: mercantile.Tile
     ) -> None:
         """Download and georeference a single tile.
 
@@ -325,11 +334,11 @@ class OpenAerialMap(RasterDataset):
             tile: mercantile tile to download
         """
         root = cast(str | os.PathLike[str], self.paths)
-        
+
         url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
-        filename = f"OAM-{tile.x}-{tile.y}-{tile.z}.tif"
+        filename = f'OAM-{tile.x}-{tile.y}-{tile.z}.tif'
         filepath = os.path.join(root, filename)
-        
+
         if os.path.exists(filepath):
             return
 
@@ -338,19 +347,19 @@ class OpenAerialMap(RasterDataset):
             async with session.get(url, timeout=timeout) as response:
                 if response.status != 200:
                     warnings.warn(
-                        f"Failed to download tile {tile}: HTTP {response.status}",
+                        f'Failed to download tile {tile}: HTTP {response.status}',
                         UserWarning,
                     )
                     return
 
                 tile_data = await response.read()
-                with open(filepath, "wb") as f:
+                with open(filepath, 'wb') as f:
                     f.write(tile_data)
 
                 self._georeference_tile(filepath, tile)
 
         except (aiohttp.ClientError, OSError) as e:
-            warnings.warn(f"Error downloading tile {tile}: {e}", UserWarning)
+            warnings.warn(f'Error downloading tile {tile}: {e}', UserWarning)
 
     def _georeference_tile(self, filepath: str, tile: mercantile.Tile) -> None:
         """Add georeferencing metadata to a downloaded tile.
@@ -364,22 +373,26 @@ class OpenAerialMap(RasterDataset):
         """
         bounds = mercantile.bounds(tile)
         try:
-            with rasterio.open(filepath, "r+") as dataset:
+            with rasterio.open(filepath, 'r+') as dataset:
                 dataset.transform = from_bounds(
-                    bounds.west, bounds.south, bounds.east, bounds.north,
-                    dataset.width, dataset.height
+                    bounds.west,
+                    bounds.south,
+                    bounds.east,
+                    bounds.north,
+                    dataset.width,
+                    dataset.height,
                 )
                 dataset.crs = RioCRS.from_epsg(4326)
                 dataset.update_tags(
-                    ns="rio_georeference",
-                    georeferencing_applied="True",
+                    ns='rio_georeference',
+                    georeferencing_applied='True',
                     tile_x=str(tile.x),
                     tile_y=str(tile.y),
                     tile_z=str(tile.z),
                 )
         except rasterio.errors.RasterioIOError:
             warnings.warn(
-                f"Could not georeference {filepath}. Not a valid raster file.",
+                f'Could not georeference {filepath}. Not a valid raster file.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -397,19 +410,18 @@ class OpenAerialMap(RasterDataset):
         Returns:
             a matplotlib Figure with the rendered sample
         """
-        image = sample["image"]
+        image = sample['image']
         # Convert C, H, W -> H, W, C
         rgb = image[0:3, :, :].permute(1, 2, 0)
 
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
-        ax.imshow(rgb, cmap="gray" if rgb.ndim == 2 else None)
-        ax.axis("off")
-        
+        ax.imshow(rgb, cmap='gray' if rgb.ndim == 2 else None)
+        ax.axis('off')
+
         if show_titles:
-            ax.set_title("Image")
+            ax.set_title('Image')
 
         if suptitle is not None:
             plt.suptitle(suptitle)
 
         return fig
-    
