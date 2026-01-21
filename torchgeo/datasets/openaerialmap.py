@@ -145,7 +145,7 @@ class OpenAerialMap(RasterDataset):
             if self.bbox is None:
                 raise ValueError('bbox must be provided when search=True')
             self._search_stac()
-            # If user only wants to search, return early
+            # If user only wants to search, return early, because dataset will raise error if it is empty and is instantiated by super init
             if not download:
                 return
 
@@ -156,7 +156,7 @@ class OpenAerialMap(RasterDataset):
                 raise ValueError(f'zoom must be between 6 and 22, got {zoom}')
             self._download()
 
-        # If 'crs' is None, it defaults to EPSG:3857 (Web Mercator)
+        # If 'crs' is None, it defaults to EPSG:3857 (Web Mercator), because 3857 makes logical sense for tiles and web maps.
         super().__init__(
             paths, crs or CRS.from_epsg(3857), res, transforms=transforms, cache=cache
         )
@@ -236,7 +236,7 @@ class OpenAerialMap(RasterDataset):
             )
             return
 
-        # Calculate tiles for bbox at specified zoom using mercantile
+        # we use truncate=True to avoid tiles outside the bbox , just to make sure there won't be corning tiles
         tiles = list(mercantile.tiles(*self.bbox, self.zoom, truncate=True))
 
         def run_in_thread() -> None:
@@ -274,7 +274,6 @@ class OpenAerialMap(RasterDataset):
         except requests.RequestException as e:
             raise RuntimeError(f'Failed to query STAC API: {e}') from e
         except (ValueError, KeyError) as e:
-            # JSON parsing or unexpected response structure
             raise RuntimeError(f'Failed to query STAC API: {e}') from e
         except Exception as e:
             raise RuntimeError(f'Failed to query STAC API: {e}') from e
@@ -283,7 +282,7 @@ class OpenAerialMap(RasterDataset):
         if not features:
             return None
 
-        # Use the first feature available
+        # Use the first feature available, because it is the most recent
         feature = features[0]
         props = feature.get('properties', {})
         visual_source = feature.get('assets', {}).get('visual', {}).get('href')
@@ -411,7 +410,7 @@ class OpenAerialMap(RasterDataset):
             a matplotlib Figure with the rendered sample
         """
         image = sample['image']
-        # Convert C, H, W -> H, W, C
+        #  C, H, W -> H, W, C
         rgb = image[0:3, :, :].permute(1, 2, 0)
 
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
