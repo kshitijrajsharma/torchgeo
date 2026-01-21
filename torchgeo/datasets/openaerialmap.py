@@ -8,7 +8,7 @@ import os
 import warnings
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import aiohttp
 import matplotlib.pyplot as plt
@@ -77,6 +77,7 @@ class OpenAerialMap(RasterDataset):
     """
 
     _stac_api_url: ClassVar[str] = "https://api.imagery.hotosm.org/stac"
+    _tile_source_url: ClassVar[str] = "https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{z}/{x}/{y}@{scale}x?url={source}"
 
     filename_glob = "OAM-*.tif"
     filename_regex = r"^OAM-.*\.tif$"
@@ -120,6 +121,7 @@ class OpenAerialMap(RasterDataset):
             search: if True, query STAC API for available imagery and return results in
                 self.search_results. Skips dataset initialization if download=False.
             image_id: optional STAC item ID to download specific imagery
+            tile_size: size of the tiles to download (256 or 512)
 
         Raises:
             DatasetNotFoundError: If dataset is not found and download=False.
@@ -133,9 +135,10 @@ class OpenAerialMap(RasterDataset):
         self.image_id = image_id
         self.search_results = None
         self.tile_size = tile_size
-        
-        if tile_size not in [256,512]:
+
+        if tile_size not in (256, 512):
             raise ValueError("only 256 and 512 are supported for tile_size")
+
         if search:
             if self.bbox is None:
                 raise ValueError("bbox must be provided when search=True")
@@ -174,7 +177,7 @@ class OpenAerialMap(RasterDataset):
             print("No images found in this bounding box.")
             return
 
-        df = pd.DataFrame([
+        self.search_results = pd.DataFrame([
             {
                 "ID": f["id"],
                 "Date": (f["properties"].get("start_datetime") or f["properties"].get("created") or ""),
@@ -185,7 +188,6 @@ class OpenAerialMap(RasterDataset):
             }
             for f in features
         ])
-        self.search_results = df
 
         print(f"Found {len(features)} available images")
         print("\nUse .search_results to view.\n")
@@ -199,8 +201,8 @@ class OpenAerialMap(RasterDataset):
         3. Calculates mercantile tiles for the bbox at specified zoom
         4. Downloads tiles asynchronously with proper georeferencing
         """
-        assert isinstance(self.paths, str | os.PathLike)
-        os.makedirs(self.paths, exist_ok=True)
+        if isinstance(self.paths, (str, os.PathLike)):
+            os.makedirs(self.paths, exist_ok=True)
 
         tms_url = self._fetch_tms_url()
         if not tms_url:
@@ -211,8 +213,7 @@ class OpenAerialMap(RasterDataset):
                 stacklevel=2,
             )
             # create placeholder to avoid DatasetNotFoundError
-            placeholder_path = os.path.join(self.paths, ".downloaded")
-            with open(placeholder_path, "w") as f:
+            with open(os.path.join(self.paths, ".downloaded"), "w") as f:
                 f.write("Download attempted but no TMS URLs found.\n")
             return
 
@@ -227,7 +228,7 @@ class OpenAerialMap(RasterDataset):
         # Calculate tiles for bbox at specified zoom using mercantile
         tiles = list(mercantile.tiles(*self.bbox, self.zoom, truncate=True))
 
-        def run_in_thread():
+        def run_in_thread() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -246,8 +247,7 @@ class OpenAerialMap(RasterDataset):
         Returns:
             TMS URL template from the specific imagery, or None if not found
         """
-        search_url = f"{self._stac_api_url}/search"
-        params = {"limit": self.max_items}
+        params: dict[str, Any] = {"limit": self.max_items}
 
         if self.image_id:
             params["ids"] = [self.image_id]
@@ -255,36 +255,38 @@ class OpenAerialMap(RasterDataset):
             params["bbox"] = list(self.bbox)
 
         try:
-            response = requests.post(search_url, json=params, timeout=30)
+            response = requests.post(f"{self._stac_api_url}/search", json=params, timeout=30)
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-            warnings.warn(f"Failed to query STAC API at {search_url}: {e}", UserWarning)
+            warnings.warn(f"Failed to query STAC API: {e}", UserWarning)
             return None
 
         features = data.get("features", [])
         if not features:
             return None
 
-        for feature in features:
-            assets = feature.get("assets", {})
-            visual = assets.get("visual", {})
-            visual_source = visual.get("href")
-            props = feature.get("properties", {})
-        
-        
-            print(f"Using OpenAerialMap image: {props.get('title', 'Unknown')}")
-            print(f"  ID: {feature.get('id', 'Unknown')}")
-            print(f"  Date: {props.get('start_datetime', 'Unknown')}")
-            print(f"  Platform: {props.get('oam:platform_type', 'Unknown')}")
-            print(f"  Provider: {props.get('oam:producer_name', 'Unknown')}")
-            print(f"  GSD: {props.get('gsd', 'Unknown')}")
-            print(f"  License: {props.get('license', 'Unknown')}")
+        # Use the first feature available
+        feature = features[0]
+        props = feature.get("properties", {})
+        visual_source = feature.get("assets", {}).get("visual", {}).get("href")
 
-            tile_url = f"https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@{'1x' if self.tile_size == 256 else '2x'}?url={visual_source}"
-            return tile_url
-        
-        return None
+        print(f"Using OpenAerialMap image: {props.get('title', 'Unknown')}")
+        print(f"  ID: {feature.get('id', 'Unknown')}")
+        print(f"  Date: {props.get('start_datetime', 'Unknown')}")
+        print(f"  Platform: {props.get('oam:platform_type', 'Unknown')}")
+        print(f"  Provider: {props.get('oam:producer_name', 'Unknown')}")
+        print(f"  GSD: {props.get('gsd', 'Unknown')}")
+        print(f"  License: {props.get('license', 'Unknown')}")
+
+        if not visual_source:
+            return None
+
+        return self._tile_source_url.format(
+            z="{z}", x="{x}", y="{y}",
+            scale=1 if self.tile_size == 256 else 2,
+            source=visual_source
+        )
 
     async def _download_tiles_async(
         self, tms_url: str, tiles: list[mercantile.Tile]
@@ -315,11 +317,10 @@ class OpenAerialMap(RasterDataset):
             tms_url: TMS URL template
             tile: mercantile tile to download
         """
-        assert isinstance(self.paths, str | os.PathLike)
-
         url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
         filename = f"OAM-{tile.x}-{tile.y}-{tile.z}.tif"
         filepath = os.path.join(self.paths, filename)
+        
         if os.path.exists(filepath):
             return
 
@@ -333,7 +334,6 @@ class OpenAerialMap(RasterDataset):
                     return
 
                 tile_data = await response.read()
-
                 with open(filepath, "wb") as f:
                     f.write(tile_data)
 
@@ -355,15 +355,10 @@ class OpenAerialMap(RasterDataset):
         bounds = mercantile.bounds(tile)
         try:
             with rasterio.open(filepath, "r+") as dataset:
-                transform = from_bounds(
-                    bounds.west,
-                    bounds.south,
-                    bounds.east,
-                    bounds.north,
-                    dataset.width,
-                    dataset.height,
+                dataset.transform = from_bounds(
+                    bounds.west, bounds.south, bounds.east, bounds.north,
+                    dataset.width, dataset.height
                 )
-                dataset.transform = transform
                 dataset.crs = RioCRS.from_epsg(4326)
                 dataset.update_tags(
                     ns="rio_georeference",
@@ -397,13 +392,9 @@ class OpenAerialMap(RasterDataset):
         rgb = image[0:3, :, :].permute(1, 2, 0)
 
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
-
-        if rgb.ndim == 2:
-            ax.imshow(rgb, cmap="gray")
-        else:
-            ax.imshow(rgb)
-
+        ax.imshow(rgb, cmap="gray" if rgb.ndim == 2 else None)
         ax.axis("off")
+        
         if show_titles:
             ax.set_title("Image")
 
