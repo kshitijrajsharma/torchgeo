@@ -7,6 +7,7 @@ import asyncio
 import os
 import warnings
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from typing import ClassVar
 
 import aiohttp
@@ -71,15 +72,6 @@ class OpenAerialMap(RasterDataset):
             download=True
         )
 
-    Example with real OAM data from Banepa, Nepal (has drone imagery + OSM buildings)::
-
-        dataset = OpenAerialMap(
-            paths='data/banepa',
-            bbox=(85.51678, 27.63134, 85.52323, 27.63744),
-            zoom=19,
-            download=True
-        )
-
     If you use this dataset in your research, please cite OpenAerialMap:
 
     * https://openaerialmap.org/
@@ -92,11 +84,7 @@ class OpenAerialMap(RasterDataset):
     filename_glob = "OAM-*.tif"
     filename_regex = r"^OAM-.*\.tif$"
 
-    all_bands = (
-        "R",
-        "G",
-        "B",
-    )  # Just placing it in case in future OAM supports other bands
+    all_bands = ("R", "G", "B")
     rgb_bands = ("R", "G", "B")
 
     def __init__(
@@ -110,7 +98,7 @@ class OpenAerialMap(RasterDataset):
         transforms: Callable[[Sample], Sample] | None = None,
         cache: bool = True,
         download: bool = False,
-        image_id: str | None = None,  #
+        image_id: str | None = None,
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
 
@@ -145,13 +133,15 @@ class OpenAerialMap(RasterDataset):
         self.max_items = max_items
         self.download = download
         self.image_id = image_id
+
         if download:
-            if bbox is None:
-                raise ValueError("bbox must be provided when download=True")
+            if bbox is None and image_id is None:
+                raise ValueError("bbox or image_id must be provided when download=True")
             if not 6 <= zoom <= 22:
                 raise ValueError(f"zoom must be between 6 and 22, got {zoom}")
             self._download()
 
+        # If 'crs' is None, it defaults to EPSG:3857 (Web Mercator)
         super().__init__(
             paths, crs or CRS.from_epsg(3857), res, transforms=transforms, cache=cache
         )
@@ -160,24 +150,18 @@ class OpenAerialMap(RasterDataset):
         """Download imagery from STAC API and TMS endpoints.
 
         This method:
-        1. Queries STAC API for imagery items within bbox
-        2. Extracts TMS URLs from STAC items (most recent first)
+        1. Queries STAC API for imagery items within bbox or by ID
+        2. Extracts TMS URLs from STAC items
         3. Calculates mercantile tiles for the bbox at specified zoom
         4. Downloads tiles asynchronously with proper georeferencing
         """
-        assert self.bbox is not None
         assert isinstance(self.paths, str | os.PathLike)
-
         os.makedirs(self.paths, exist_ok=True)
 
-        if self.image_id is not None:
-            print(f"Querying STAC API for image ID {self.image_id}...")
-            tms_url = self._query_stac_by_id()
-        else:
-            tms_url = self._query_stac_for_tms()
+        tms_url = self._fetch_tms_url()
         if not tms_url:
             warnings.warn(
-                f"No TMS imagery found for bbox {self.bbox}. "
+                f"No TMS imagery found for bbox {self.bbox} or ID {self.image_id}. "
                 "Try a different area or check OpenAerialMap coverage.",
                 UserWarning,
                 stacklevel=2,
@@ -188,130 +172,87 @@ class OpenAerialMap(RasterDataset):
                 f.write("Download attempted but no TMS URLs found.\n")
             return
 
-        # calculate tiles for bbox at specified zoom using mercantile
+        # If image_id provided without bbox, we can't calculate tiles easily without parsing
+        # the feature geometry. For now, we enforce bbox presence or rely on user providing it.
+        if self.bbox is None:
+            warnings.warn(
+                "Bounding box (bbox) is required to calculate tiles, even when image_id is provided.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+
+        # Calculate tiles for bbox at specified zoom using mercantile
         tiles = list(mercantile.tiles(*self.bbox, self.zoom, truncate=True))
-        # print(tiles)
 
-        asyncio.run(self._download_tiles_async(tms_url, tiles))
+        def run_in_thread():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._download_tiles_async(tms_url, tiles))
+            finally:
+                loop.close()
 
-    def _query_stac_by_id(self) -> str | None:
-        """Query STAC API by ID and extract TMS URL.
+        with ThreadPoolExecutor() as executor:
+            executor.submit(run_in_thread).result()
+
+    def _fetch_tms_url(self) -> str | None:
+        """Query STAC API and extract TMS URL from metadata.
+
+        Combines logic for ID-based and BBox-based queries.
 
         Returns:
             TMS URL template from the specific imagery, or None if not found
         """
         search_url = f"{self._stac_api_url}/search"
-        print(search_url)
-        params = {"ids": [self.image_id]}
+        params = {"limit": self.max_items}
+
+        if self.image_id:
+            params["ids"] = [self.image_id]
+        elif self.bbox:
+            params["bbox"] = list(self.bbox)
 
         try:
             response = requests.post(search_url, json=params, timeout=30)
             response.raise_for_status()
             data = response.json()
-        except Exception as e:
-            raise RuntimeError(f"Failed to query STAC API at {search_url}: {e}") from e
+        except requests.RequestException as e:
+            warnings.warn(f"Failed to query STAC API at {search_url}: {e}", UserWarning)
+            return None
 
         features = data.get("features", [])
-        print(f"Found {len(features)} STAC features")
         if not features:
             return None
 
-        # Process the single feature found
-        feature = features[0]
-
-        print(feature["properties"].keys())
-        print(
-            f"found {feature['id']} : {feature['properties']['title']}, with gsd {feature['properties']['gsd']}"
-        )
-        assets = feature.get("assets", {})
-        print(assets.keys())
-        thumbnail = assets.get("thumbnail", {})
-        print(thumbnail.get("href", ""))
-
-        if "metadata" in assets:
-            print(assets["metadata"].keys())
-            href = assets["metadata"].get("href", "")
-            try:
-                response = requests.get(href, timeout=10)
-                response.raise_for_status()
-                metadata = response.json()
-            except Exception as e:
-                print(f"Failed to fetch metadata from {href}: {e}")
-                metadata = None
-            print(metadata)
-            print(metadata.keys())
-            metadata_properties = metadata.get("properties", {})
-            tms = metadata_properties.get("tms", {})
-            print(tms)
-            if "{z}" in tms and "{x}" in tms and "{y}" in tms:
-                return tms
-        return None
-
-    def _query_stac_for_tms(
-        self,
-    ) -> str | None:  # TODO : add single item search as well
-        """Query STAC API and extract TMS URL.
-
-        Returns:
-            TMS URL template from most recent imagery, or None if not found
-        """
-        search_url = f"{self._stac_api_url}/search"
-        print(search_url)
-        params = {
-            "bbox": list(self.bbox),
-            "limit": self.max_items,  # TODO : Add sorting here
-        }
-
-        try:
-            response = requests.post(search_url, json=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            # print(data)
-        except Exception as e:
-            raise RuntimeError(f"Failed to query STAC API at {search_url}: {e}") from e
-
-        features = data.get("features", [])
-        # print(features)
-        print(f"Found {len(features)} STAC features")
-        if not features:
-            return None
-
+        # Iterate through features to find the first one with a valid TMS
         for feature in features:
-            # print(feature)
-            print(feature["properties"].keys())
-            print(
-                f"found {feature['id']} : {feature['properties']['title']}, with gsd {feature['properties']['gsd']}"
-            )
             assets = feature.get("assets", {})
-            # print(assets)
-            print(assets.keys())
-            thumbnail = assets.get("thumbnail", {})
-            print(thumbnail.get("href", ""))
+            metadata = assets.get("metadata", {})
+            href = metadata.get("href")
 
-            if "metadata" in assets:
-                print(assets["metadata"].keys())
-                href = assets["metadata"].get("href", "")
-                try:
-                    response = requests.get(href, timeout=10)
-                    response.raise_for_status()
-                    metadata = response.json()
-                except Exception as e:
-                    print(f"Failed to fetch metadata from {href}: {e}")
-                    metadata = None
-                # print(metadata)
-                print(metadata.keys())
-                metadata_properties = metadata.get("properties", {})
-                tms = metadata_properties.get("tms", {})
-                print(tms)
-                if "{z}" in tms and "{x}" in tms and "{y}" in tms:
+            if not href:
+                continue
+
+            try:
+                # Fetch OAM specific metadata which contains the TMS url
+                meta_response = requests.get(href, timeout=10)
+                meta_response.raise_for_status()
+                meta_json = meta_response.json()
+
+                tms = meta_json.get("properties", {}).get("tms")
+                if tms and "{z}" in tms and "{x}" in tms and "{y}" in tms:
                     return tms
+
+            except requests.RequestException:
+                # If metadata fetch fails for one item, try the next
+                continue
 
         return None
 
     async def _download_tiles_async(
         self, tms_url: str, tiles: list[mercantile.Tile]
     ) -> None:
-        """Download tiles asynchronously.
+        """Download tiles asynchronously with progress bar.
 
         Args:
             tms_url: TMS URL template with {z}, {x}, {y} placeholders
@@ -321,7 +262,8 @@ class OpenAerialMap(RasterDataset):
             tasks = [
                 self._download_single_tile(session, tms_url, tile) for tile in tiles
             ]
-            await asyncio.gather(*tasks, return_exceptions=True)
+
+            await tqdm_asyncio.gather(*tasks, desc="Downloading Tiles", leave=False)
 
     async def _download_single_tile(
         self,
@@ -339,9 +281,6 @@ class OpenAerialMap(RasterDataset):
         assert isinstance(self.paths, str | os.PathLike)
 
         url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
-        # print(f"Downloading tile {tile} from {url}...")
-
-        # Output filename following convention
         filename = f"OAM-{tile.x}-{tile.y}-{tile.z}.tif"
         filepath = os.path.join(self.paths, filename)
 
@@ -354,7 +293,6 @@ class OpenAerialMap(RasterDataset):
                     warnings.warn(
                         f"Failed to download tile {tile}: HTTP {response.status}",
                         UserWarning,
-                        stacklevel=2,
                     )
                     return
 
@@ -366,22 +304,19 @@ class OpenAerialMap(RasterDataset):
                 self._georeference_tile(filepath, tile)
 
         except (aiohttp.ClientError, OSError) as e:
-            warnings.warn(
-                f"Error downloading tile {tile}: {e}",
-                UserWarning,
-                stacklevel=2,
-            )
+            warnings.warn(f"Error downloading tile {tile}: {e}", UserWarning)
 
     def _georeference_tile(self, filepath: str, tile: mercantile.Tile) -> None:
         """Add georeferencing metadata to a downloaded tile.
+
+        This sets the CRS to EPSG:4326 because mercantile bounds are lat/lon.
+        The parent RasterDataset will handle warping to the user's requested CRS.
 
         Args:
             filepath: path to tile file
             tile: mercantile tile for calculating bounds
         """
-        # get tile bounds in EPSG:4326
         bounds = mercantile.bounds(tile)
-
         try:
             with rasterio.open(filepath, "r+") as dataset:
                 transform = from_bounds(
@@ -397,9 +332,9 @@ class OpenAerialMap(RasterDataset):
                 dataset.update_tags(
                     ns="rio_georeference",
                     georeferencing_applied="True",
-                    tile_x=tile.x,
-                    tile_y=tile.y,
-                    tile_z=tile.z,
+                    tile_x=str(tile.x),
+                    tile_y=str(tile.y),
+                    tile_z=str(tile.z),
                 )
         except rasterio.errors.RasterioIOError:
             warnings.warn(
@@ -422,23 +357,19 @@ class OpenAerialMap(RasterDataset):
             a matplotlib Figure with the rendered sample
         """
         image = sample["image"]
-
+        # Convert C, H, W -> H, W, C for plotting
         if image.shape[0] >= 3:
-            # RGB or more bands - take first 3 for RGB
             rgb = image[0:3, :, :].permute(1, 2, 0)
-        elif image.shape[0] == 1:
-            # single band - display as grayscale # kinda rare in OAM but possible
-            rgb = image[0, :, :]
         else:
-            # 2 bands - display first band
             rgb = image[0, :, :]
 
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
 
-        if rgb.ndim == 3:
-            ax.imshow(rgb)
-        else:
+        # If data is 2D (grayscale/single band), use gray colormap
+        if rgb.ndim == 2:
             ax.imshow(rgb, cmap="gray")
+        else:
+            ax.imshow(rgb)
 
         ax.axis("off")
         if show_titles:
