@@ -34,6 +34,7 @@ release = torchgeo.__version__
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    'myst_parser',
     'sphinx.ext.autodoc',
     'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
@@ -60,6 +61,7 @@ nitpick_ignore = [
     ('py:class', 'lightning.pytorch.utilities.types.LRSchedulerConfig'),
     ('py:class', 'lightning.pytorch.utilities.types.OptimizerConfig'),
     ('py:class', 'lightning.pytorch.utilities.types.OptimizerLRSchedulerConfig'),
+    ('py:class', 'numpy.uint8'),
     ('py:class', 'segmentation_models_pytorch.base.model.SegmentationModel'),
     ('py:class', 'timm.models.resnet.ResNet'),
     ('py:class', 'timm.models.vision_transformer.VisionTransformer'),
@@ -170,6 +172,8 @@ intersphinx_mapping = {
     'torchvision': ('https://docs.pytorch.org/vision/stable/', None),
 }
 
+# myst-parser
+suppress_warnings = ['myst.header']
 
 # nbsphinx
 nbsphinx_execute = 'never'
