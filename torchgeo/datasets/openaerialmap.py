@@ -13,6 +13,7 @@ from typing import ClassVar
 import aiohttp
 import matplotlib.pyplot as plt
 import mercantile
+import pandas as pd
 import rasterio
 import requests
 from matplotlib.figure import Figure
@@ -53,15 +54,13 @@ class OpenAerialMap(RasterDataset):
 
     The dataset can be used in two modes:
 
-    1. **Local mode**: Load pre-downloaded imagery from a local directory
-    2. **Download mode**: Query STAC API and download TMS tiles
+    1. **Search mode**: Query available imagery in a bbox.
+    2. **Download mode**: Query STAC API and download TMS tiles.
 
-    For local mode, organize imagery files in a directory structure::
+    For search mode::
 
-        root/
-        ├── OAM-1234-5678-19.tif
-        ├── OAM-1235-5678-19.tif
-        └── ...
+        oam = OpenAerialMap(bbox=bbox, search=True)
+        # oam.search_results contains the DataFrame
 
     For download mode, provide a bounding box (same format as OpenStreetMap) and zoom level::
 
@@ -75,8 +74,6 @@ class OpenAerialMap(RasterDataset):
     If you use this dataset in your research, please cite OpenAerialMap:
 
     * https://openaerialmap.org/
-
-    .. versionadded:: 0.8
     """
 
     _stac_api_url: ClassVar[str] = "https://api.imagery.hotosm.org/stac"
@@ -98,6 +95,7 @@ class OpenAerialMap(RasterDataset):
         transforms: Callable[[Sample], Sample] | None = None,
         cache: bool = True,
         download: bool = False,
+        search: bool = False,
         image_id: str | None = None,
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
@@ -110,17 +108,16 @@ class OpenAerialMap(RasterDataset):
                 (defaults to resolution of first file found)
             bbox: bounding box for STAC query as (xmin, ymin, xmax, ymax) in EPSG:4326.
                 Same format as OpenStreetMap for easy dataset combination.
-                Only used when download=True
             zoom: zoom level for tiles (1-22), only used when download=True.
                 Higher zoom = more detail. Typical values: 18-20 for high-res drone imagery
-            max_items: maximum number of STAC items to query, only used when download=True.
-                STAC API returns most recent imagery first. Use max_items=1 for latest imagery,
-                or increase to search through more imagery sources if first result doesn't have TMS tiles.
+            max_items: maximum number of STAC items to query.
             transforms: a function/transform that takes an input sample
                 and returns a transformed version. Note: CRS transformation is handled
                 automatically via the crs parameter.
             cache: if True, cache file handle to speed up repeated sampling
             download: if True, download imagery from STAC API based on bbox
+            search: if True, query STAC API for available imagery and return results in
+                self.search_results. Skips dataset initialization if download=False.
             image_id: optional STAC item ID to download specific imagery
 
         Raises:
@@ -133,6 +130,15 @@ class OpenAerialMap(RasterDataset):
         self.max_items = max_items
         self.download = download
         self.image_id = image_id
+        self.search_results = None
+
+        if search:
+            if self.bbox is None:
+                raise ValueError("bbox must be provided when search=True")
+            self._search_stac()
+            # If user only wants to search, return early
+            if not download:
+                return
 
         if download:
             if bbox is None and image_id is None:
@@ -145,6 +151,39 @@ class OpenAerialMap(RasterDataset):
         super().__init__(
             paths, crs or CRS.from_epsg(3857), res, transforms=transforms, cache=cache
         )
+
+    def _search_stac(self) -> None:
+        """Query and display available imagery as a DataFrame."""
+        try:
+            resp = requests.post(
+                f"{self._stac_api_url}/search",
+                json={"bbox": list(self.bbox), "limit": max(self.max_items, 20)},
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            warnings.warn(f"STAC search failed: {e}", UserWarning)
+            return
+
+        features = resp.json().get("features", [])
+        if not features:
+            print("No images found in this bounding box.")
+            return
+
+        df = pd.DataFrame([
+            {
+                "ID": f["id"],
+                "Date": (f["properties"].get("acquisition_start") or f["properties"].get("created") or "")[:10],
+                "Platform": f["properties"].get("oam:platform_type"),
+                "GSD": f["properties"].get("gsd"),
+                "Title": f["properties"].get("title"),
+            }
+            for f in features
+        ])
+        self.search_results = df
+
+        print(f"Found {len(features)} available images")
+        print("\nUse .search_results to view.\n")
 
     def _download(self) -> None:
         """Download imagery from STAC API and TMS endpoints.
@@ -172,8 +211,6 @@ class OpenAerialMap(RasterDataset):
                 f.write("Download attempted but no TMS URLs found.\n")
             return
 
-        # If image_id provided without bbox, we can't calculate tiles easily without parsing
-        # the feature geometry. For now, we enforce bbox presence or rely on user providing it.
         if self.bbox is None:
             warnings.warn(
                 "Bounding box (bbox) is required to calculate tiles, even when image_id is provided.",
@@ -224,7 +261,6 @@ class OpenAerialMap(RasterDataset):
         if not features:
             return None
 
-        # Iterate through features to find the first one with a valid TMS
         for feature in features:
             assets = feature.get("assets", {})
             metadata = assets.get("metadata", {})
@@ -234,17 +270,21 @@ class OpenAerialMap(RasterDataset):
                 continue
 
             try:
-                # Fetch OAM specific metadata which contains the TMS url
                 meta_response = requests.get(href, timeout=10)
                 meta_response.raise_for_status()
                 meta_json = meta_response.json()
 
                 tms = meta_json.get("properties", {}).get("tms")
                 if tms and "{z}" in tms and "{x}" in tms and "{y}" in tms:
+                    props = feature.get("properties", {})
+                    print(f"Using OpenAerialMap image: {props.get('title', 'Unknown')}")
+                    print(f"  ID: {feature.get('id', 'Unknown')}")
+                    print(f"  Platform: {props.get('oam:platform_type', 'Unknown')}")
+                    print(f"  GSD: {props.get('gsd', 'Unknown')}")
+                    print(f"  License: {props.get('license', 'Unknown')}")
                     return tms
 
             except requests.RequestException:
-                # If metadata fetch fails for one item, try the next
                 continue
 
         return None
@@ -357,15 +397,11 @@ class OpenAerialMap(RasterDataset):
             a matplotlib Figure with the rendered sample
         """
         image = sample["image"]
-        # Convert C, H, W -> H, W, C for plotting
-        if image.shape[0] >= 3:
-            rgb = image[0:3, :, :].permute(1, 2, 0)
-        else:
-            rgb = image[0, :, :]
+        # Convert C, H, W -> H, W, C
+        rgb = image[0:3, :, :].permute(1, 2, 0)
 
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
 
-        # If data is 2D (grayscale/single band), use gray colormap
         if rgb.ndim == 2:
             ax.imshow(rgb, cmap="gray")
         else:
