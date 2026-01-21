@@ -126,9 +126,9 @@ from .naip import NAIP
 from .nasa_marine_debris import NASAMarineDebris
 from .nccm import NCCM
 from .nlcd import NLCD
+from .openaerialmap import OpenAerialMap
 from .openbuildings import OpenBuildings
 from .openstreetmap import OpenStreetMap
-from .openaerialmap import OpenAerialMap
 from .oscd import OSCD
 from .pastis import PASTIS
 from .patternnet import PatternNet
