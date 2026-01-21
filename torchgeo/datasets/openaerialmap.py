@@ -8,7 +8,7 @@ import os
 import warnings
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import aiohttp
 import matplotlib.pyplot as plt
@@ -133,7 +133,7 @@ class OpenAerialMap(RasterDataset):
         self.max_items = max_items
         self.download = download
         self.image_id = image_id
-        self.search_results = None
+        self.search_results: pd.DataFrame | None = None
         self.tile_size = tile_size
 
         if tile_size not in (256, 512):
@@ -161,6 +161,7 @@ class OpenAerialMap(RasterDataset):
 
     def _search_stac(self) -> None:
         """Query and display available imagery as a DataFrame."""
+        assert self.bbox is not None
         try:
             resp = requests.post(
                 f"{self._stac_api_url}/search",
@@ -201,8 +202,10 @@ class OpenAerialMap(RasterDataset):
         3. Calculates mercantile tiles for the bbox at specified zoom
         4. Downloads tiles asynchronously with proper georeferencing
         """
-        if isinstance(self.paths, (str, os.PathLike)):
-            os.makedirs(self.paths, exist_ok=True)
+        root = cast(str | os.PathLike[str], self.paths)
+
+        if isinstance(root, (str, os.PathLike)):
+            os.makedirs(root, exist_ok=True)
 
         tms_url = self._fetch_tms_url()
         if not tms_url:
@@ -213,7 +216,7 @@ class OpenAerialMap(RasterDataset):
                 stacklevel=2,
             )
             # create placeholder to avoid DatasetNotFoundError
-            with open(os.path.join(self.paths, ".downloaded"), "w") as f:
+            with open(os.path.join(root, ".downloaded"), "w") as f:
                 f.write("Download attempted but no TMS URLs found.\n")
             return
 
@@ -321,15 +324,18 @@ class OpenAerialMap(RasterDataset):
             tms_url: TMS URL template
             tile: mercantile tile to download
         """
+        root = cast(str | os.PathLike[str], self.paths)
+        
         url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
         filename = f"OAM-{tile.x}-{tile.y}-{tile.z}.tif"
-        filepath = os.path.join(self.paths, filename)
+        filepath = os.path.join(root, filename)
         
         if os.path.exists(filepath):
             return
 
         try:
-            async with session.get(url, timeout=30) as response:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with session.get(url, timeout=timeout) as response:
                 if response.status != 200:
                     warnings.warn(
                         f"Failed to download tile {tile}: HTTP {response.status}",
