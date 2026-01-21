@@ -259,9 +259,13 @@ class OpenAerialMap(RasterDataset):
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-            warnings.warn(f"Failed to query STAC API: {e}", UserWarning)
-            return None
-
+           raise RuntimeError(f"Failed to query STAC API: {e}") from e
+        except (ValueError, KeyError) as e:
+            # JSON parsing or unexpected response structure
+            raise RuntimeError(f"Failed to query STAC API: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to query STAC API: {e}") from e
+        
         features = data.get("features", [])
         if not features:
             return None

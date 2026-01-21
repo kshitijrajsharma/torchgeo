@@ -52,7 +52,7 @@ class TestOpenAerialMap:
             OpenAerialMap(tmp_path)
 
     def test_download_no_bbox(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="bbox must be provided"):
+        with pytest.raises(ValueError, match="bbox or image_id must be provided"):
             OpenAerialMap(tmp_path, download=True)
 
     @patch("torchgeo.datasets.openaerialmap.requests.post")
