@@ -55,12 +55,16 @@ jobs:
           echo "=== Installed packages ==="
           uv pip list
 
-
       - name: Run checks
         run: |
-          uv run pytest --cov=torchgeo --cov-report=xml
-          uv run torchgeo --help
-
+          if [[ "${{ matrix.name }}" == "minimum" ]]; then
+            # Don't sync from pyproject.toml, use already-installed min deps # TODO : later migrate min deps to pyproject.toml and remove this
+            uv run --no-sync pytest --cov=torchgeo --cov-report=xml
+            uv run --no-sync torchgeo --help
+          else
+            uv run pytest --cov=torchgeo --cov-report=xml
+            uv run torchgeo --help
+          fi
       - uses: codecov/codecov-action@v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
