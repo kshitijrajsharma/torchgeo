@@ -25,13 +25,13 @@ jobs:
           - name: minimum
             os: ubuntu-latest
             python-version: '3.12'
-            extras: 'datasets,models,tests'
+            sync_args: '--extra datasets --extra models --extra tests --resolution lowest'
             resolution: lowest
           # Optional dependencies check (core + tests only)
           - name: optional
             os: ubuntu-latest
             python-version: '3.13'
-            extras: 'tests'
+            sync_args: '--extra tests'
 
     steps:
       - uses: actions/checkout@v6.0.1
@@ -43,13 +43,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv pip install --system ".[${{ matrix.extras }}]" ${{ matrix.resolution == 'lowest' && '--resolution lowest' || '' }}
-          uv pip list
+          uv sync ${{ matrix.sync_args }}
 
       - name: Run checks
         run: |
-          pytest --cov=torchgeo --cov-report=xml
-          python -m torchgeo --help
+          uv run pytest --cov=torchgeo --cov-report=xml
+          uv run torchgeo --help
 
       - uses: codecov/codecov-action@v5.5.2
         with:
