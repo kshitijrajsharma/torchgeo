@@ -50,6 +50,15 @@ jobs:
           fi
           UV_RESOLUTION=highest ${{ matrix.install_cmd }}
 
+      - name: List installed dependencies
+        run: |
+          echo "=== Installed packages ==="
+          uv pip list
+          echo "=== Python/uv info ==="
+          uv run python --version
+          uv --version
+
+
       - name: Run checks
         run: |
           uv run pytest --cov=torchgeo --cov-report=xml
