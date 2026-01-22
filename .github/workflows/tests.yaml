@@ -54,9 +54,6 @@ jobs:
         run: |
           echo "=== Installed packages ==="
           uv pip list
-          echo "=== Python/uv info ==="
-          uv run python --version
-          uv --version
 
 
       - name: Run checks
