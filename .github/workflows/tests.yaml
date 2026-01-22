@@ -47,6 +47,7 @@ jobs:
           # Create venv if using pip install mode (uv sync creates it automatically)
           if [[ "${{ matrix.name }}" == "minimum" ]]; then
             uv venv
+            uv pip install -e . --no-deps
           fi
           UV_RESOLUTION=highest ${{ matrix.install_cmd }}
 
