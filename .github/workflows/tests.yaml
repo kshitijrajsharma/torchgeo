@@ -1,119 +1,60 @@
 name: tests
 on:
   push:
-    branches:
-      - main
-      - release**
+    branches: [main, release**]
   pull_request:
-    branches:
-      - main
-      - release**
+    branches: [main, release**]
+
 defaults:
   run:
     shell: bash
+
 jobs:
-  latest:
-    name: latest
+  tests:
+    name: ${{ matrix.name || 'latest' }} (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false # keep running other jobs in matrix if one fails
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.12', '3.13']
+        extras: ['datasets,models,tests']
+        resolution: ['highest']
+        include:
+          # Minimum dependencies check
+          - name: minimum
+            os: ubuntu-latest
+            python-version: '3.12'
+            extras: 'datasets,models,tests'
+            resolution: lowest
+          # Optional dependencies check (core + tests only)
+          - name: optional
+            os: ubuntu-latest
+            python-version: '3.13'
+            extras: 'tests'
+
     steps:
-      - name: Clone repo
-        uses: actions/checkout@v6.0.1
-      - name: Set up python
-        id: setup-python
-        uses: actions/setup-python@v6.1.0
+      - uses: actions/checkout@v6.0.1
+
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
-          check-latest: true
-      - name: Cache dependencies
-        uses: actions/cache@v5.0.2
-        id: cache
-        with:
-          path: ${{ env.pythonLocation }}
-          key: ${{ runner.os }}-${{ runner.arch }}-Python-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements/required.txt', 'requirements/datasets.txt', 'requirements/models.txt', 'requirements/tests.txt') }}
-        if: ${{ runner.os != 'macOS' }}
-      - name: Install pip dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
+          enable-cache: true
+
+      - name: Install dependencies
         run: |
-          pip install -r requirements/required.txt -r requirements/datasets.txt -r requirements/models.txt -r requirements/tests.txt
-          pip cache purge
-      - name: List pip dependencies
-        run: pip list
-      - name: Run pytest checks
+          uv pip install --system ".[${{ matrix.extras }}]" ${{ matrix.resolution == 'lowest' && '--resolution lowest' || '' }}
+          uv pip list
+
+      - name: Run checks
         run: |
           pytest --cov=torchgeo --cov-report=xml
-          python3 -m torchgeo --help
-      - name: Report coverage
-        uses: codecov/codecov-action@v5.5.2
+          python -m torchgeo --help
+
+      - uses: codecov/codecov-action@v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-  minimum:
-    name: minimum
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clone repo
-        uses: actions/checkout@v6.0.1
-      - name: Set up python
-        id: setup-python
-        uses: actions/setup-python@v6.1.0
-        with:
-          python-version: '3.12'
-      - name: Cache dependencies
-        uses: actions/cache@v5.0.2
-        id: cache
-        with:
-          path: ${{ env.pythonLocation }}
-          key: ${{ runner.os }}-${{ runner.arch }}-Python-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements/min-reqs.old') }}
-      - name: Install pip dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          pip install -r requirements/min-reqs.old
-          pip cache purge
-      - name: List pip dependencies
-        run: pip list
-      - name: Run pytest checks
-        run: |
-          pytest --cov=torchgeo --cov-report=xml
-          python3 -m torchgeo --help
-      - name: Report coverage
-        uses: codecov/codecov-action@v5.5.2
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-  optional:
-    name: optional
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clone repo
-        uses: actions/checkout@v6.0.1
-      - name: Set up python
-        id: setup-python
-        uses: actions/setup-python@v6.1.0
-        with:
-          python-version: '3.13'
-      - name: Cache dependencies
-        uses: actions/cache@v5.0.2
-        id: cache
-        with:
-          path: ${{ env.pythonLocation }}
-          key: ${{ runner.os }}-${{ runner.arch }}-Python-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements/required.txt', 'requirements/tests.txt') }}
-      - name: Install pip dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          pip install -r requirements/required.txt -r requirements/tests.txt
-          pip cache purge
-      - name: List pip dependencies
-        run: pip list
-      - name: Run pytest checks
-        run: |
-          pytest --cov=torchgeo --cov-report=xml
-          python3 -m torchgeo --help
-      - name: Report coverage
-        uses: codecov/codecov-action@v5.5.2
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.label || github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
