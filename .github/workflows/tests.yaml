@@ -48,7 +48,7 @@ jobs:
           if [[ "${{ matrix.name }}" == "minimum" ]]; then
             uv venv
           fi
-          ${{ matrix.install_cmd }}
+          UV_RESOLUTION=highest ${{ matrix.install_cmd }}
 
       - name: Run checks
         run: |
