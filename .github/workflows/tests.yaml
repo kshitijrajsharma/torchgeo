@@ -18,15 +18,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.12', '3.13']
-        extras: ['datasets,models,tests']
-        resolution: ['highest']
+        sync_args: ['--extra datasets --extra models --extra tests']
+
         include:
           # Minimum dependencies check
           - name: minimum
             os: ubuntu-latest
             python-version: '3.12'
             sync_args: '--extra datasets --extra models --extra tests --resolution lowest'
-            resolution: lowest
+
           # Optional dependencies check (core + tests only)
           - name: optional
             os: ubuntu-latest
