@@ -18,18 +18,20 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.12', '3.13']
-        sync_args: ['--extra datasets --extra models --extra tests']
+        install_cmd: ['uv sync --extra datasets --extra models --extra tests']
 
         include:
+          # Minimum: Legacy install via pip install
           - name: minimum
             os: ubuntu-latest
             python-version: '3.12'
-            sync_args: '--extra datasets --extra models --extra tests --resolution lowest'
+            install_cmd: 'uv pip install -r requirements/min-reqs.old'
 
+          # Optional: Core + Tests only
           - name: optional
             os: ubuntu-latest
             python-version: '3.13'
-            sync_args: '--extra tests'
+            install_cmd: 'uv sync --extra tests'
 
     steps:
       - uses: actions/checkout@v6.0.1
@@ -40,7 +42,13 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync ${{ matrix.sync_args }}
+        # Dynamically runs either 'uv sync' or 'uv pip install' to support minimum deps
+        run: |
+          # Create venv if using pip install mode (uv sync creates it automatically)
+          if [[ "${{ matrix.name }}" == "minimum" ]]; then
+            uv venv
+          fi
+          ${{ matrix.install_cmd }}
 
       - name: Run checks
         run: |
