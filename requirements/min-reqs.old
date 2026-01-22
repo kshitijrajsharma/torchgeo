@@ -1,5 +1,6 @@
 # required
 einops==0.3.0
+fastapi==0.88.0 # lightning 2.0.0 requires fastapi <0.89, must be compatible with pydantic 1.x
 fiona==1.9.6  # Remove when we upgrade min version of geopandas to 0.14.4+
 geopandas==0.13.0
 jsonargparse[signatures]==4.35.0
