@@ -12,7 +12,6 @@ from typing import Any, ClassVar, cast
 
 import aiohttp
 import matplotlib.pyplot as plt
-import mercantile
 import pandas as pd
 import rasterio
 import requests
@@ -23,7 +22,7 @@ from rasterio.transform import from_bounds
 from tqdm.asyncio import tqdm_asyncio
 
 from .geo import RasterDataset
-from .utils import Path, Sample
+from .utils import Path, Sample, lazy_import
 
 
 class OpenAerialMap(RasterDataset):
@@ -237,6 +236,7 @@ class OpenAerialMap(RasterDataset):
             return
 
         # we use truncate=True to avoid tiles outside the bbox , just to make sure there won't be corning tiles
+        mercantile = lazy_import('mercantile')
         tiles = list(mercantile.tiles(*self.bbox, self.zoom, truncate=True))
 
         def run_in_thread() -> None:
@@ -306,9 +306,7 @@ class OpenAerialMap(RasterDataset):
             source=visual_source,
         )
 
-    async def _download_tiles_async(
-        self, tms_url: str, tiles: list[mercantile.Tile]
-    ) -> None:
+    async def _download_tiles_async(self, tms_url: str, tiles: list[Any]) -> None:
         """Download tiles asynchronously with progress bar.
 
         Args:
@@ -323,7 +321,7 @@ class OpenAerialMap(RasterDataset):
             await tqdm_asyncio.gather(*tasks, desc='Downloading Tiles', leave=False)
 
     async def _download_single_tile(
-        self, session: aiohttp.ClientSession, tms_url: str, tile: mercantile.Tile
+        self, session: aiohttp.ClientSession, tms_url: str, tile: Any
     ) -> None:
         """Download and georeference a single tile.
 
@@ -360,7 +358,7 @@ class OpenAerialMap(RasterDataset):
         except (aiohttp.ClientError, OSError) as e:
             warnings.warn(f'Error downloading tile {tile}: {e}', UserWarning)
 
-    def _georeference_tile(self, filepath: str, tile: mercantile.Tile) -> None:
+    def _georeference_tile(self, filepath: str, tile: Any) -> None:
         """Add georeferencing metadata to a downloaded tile.
 
         This sets the CRS to EPSG:4326 because mercantile bounds are lat/lon.
@@ -370,6 +368,7 @@ class OpenAerialMap(RasterDataset):
             filepath: path to tile file
             tile: mercantile tile for calculating bounds
         """
+        mercantile = lazy_import('mercantile')
         bounds = mercantile.bounds(tile)
         try:
             with rasterio.open(filepath, 'r+') as dataset:
