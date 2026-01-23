@@ -259,6 +259,25 @@ class TestOpenAerialMap:
 
         asyncio.run(wrapper())
 
+    def test_georeference_tile_success(
+        self, dataset: OpenAerialMap, tmp_path: Path
+    ) -> None:
+        filepath = tmp_path / 'test.tif'
+        filepath.touch()
+        tile = mercantile.Tile(x=1, y=1, z=1)
+
+        mock_dataset = MagicMock()
+        mock_dataset.width = 256
+        mock_dataset.height = 256
+
+        with patch('rasterio.open') as mock_open:
+            mock_open.return_value.__enter__.return_value = mock_dataset
+            dataset._georeference_tile(str(filepath), tile)
+
+            assert mock_dataset.transform is not None
+            assert mock_dataset.crs is not None
+            mock_dataset.update_tags.assert_called_once()
+
     def test_download_single_tile_failures(
         self, dataset: OpenAerialMap, tmp_path: Path
     ) -> None:
