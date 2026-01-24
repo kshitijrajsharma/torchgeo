@@ -401,6 +401,10 @@ class OpenAerialMap(RasterDataset):
         #  C, H, W -> H, W, C
         rgb = image[0:3, :, :].permute(1, 2, 0)
 
+        if rgb.is_floating_point() and rgb.max() > 1:
+            rgb = rgb / 255.0
+            rgb = rgb.clamp(0, 1)
+
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
         ax.imshow(rgb, cmap='gray' if rgb.ndim == 2 else None)
         ax.axis('off')
