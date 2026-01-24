@@ -1,14 +1,17 @@
 name: tests
 on:
   push:
-    branches: [main, release**]
+    branches:
+      - main
+      - release**
   pull_request:
-    branches: [main, release**]
+    branches:
+      - main
+      - release**
   workflow_dispatch:
 defaults:
   run:
     shell: bash
-
 jobs:
   tests:
     name: ${{ matrix.name || 'latest' }} (${{ matrix.os }}, ${{ matrix.python-version }})
@@ -19,28 +22,25 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.12', '3.13']
         install_cmd: ['uv sync --extra datasets --extra models --extra tests']
-
         include:
           # Minimum: Legacy install via pip install
           - name: minimum
             os: ubuntu-latest
             python-version: '3.12'
             install_cmd: 'uv pip install -r requirements/min-reqs.old'
-
           # Optional: Core + Tests only
           - name: optional
             os: ubuntu-latest
             python-version: '3.13'
             install_cmd: 'uv sync --extra tests'
-
     steps:
-      - uses: actions/checkout@v6.0.1
-
-      - uses: astral-sh/setup-uv@v7
+      - name: Clone repo
+        uses: actions/checkout@v6.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-
       - name: Install dependencies
         # Dynamically runs either 'uv sync' or 'uv pip install' to support minimum deps
         run: |
@@ -50,12 +50,10 @@ jobs:
             uv pip install -e . --no-deps
           fi
           UV_RESOLUTION=highest ${{ matrix.install_cmd }}
-
       - name: List installed dependencies
         run: |
           echo "=== Installed packages ==="
           uv pip list
-
       - name: Run checks
         run: |
           if [[ "${{ matrix.name }}" == "minimum" ]]; then
@@ -66,10 +64,10 @@ jobs:
             uv run pytest --cov=torchgeo --cov-report=xml
             uv run torchgeo --help
           fi
-      - uses: codecov/codecov-action@v5.5.2
+      - name: Report coverage
+        uses: codecov/codecov-action@v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.label || github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
