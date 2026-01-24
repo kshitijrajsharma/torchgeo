@@ -27,9 +27,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
+          activate-environment: true
+          cache-dependency-glob: |
+            requirements/*.txt
       - name: Install dependencies
         run: |
-          uv venv
           uv pip install -e . --no-deps
           uv pip install -r requirements/required.txt -r requirements/datasets.txt -r requirements/models.txt -r requirements/tests.txt
       - name: List installed dependencies
@@ -53,9 +55,11 @@ jobs:
         with:
           python-version: '3.12'
           enable-cache: true
+          activate-environment: true
+          cache-dependency-glob: |
+            **/min-reqs.old
       - name: Install dependencies
         run: |
-          uv venv
           uv pip install -e . --no-deps
           uv pip install -r requirements/min-reqs.old
       - name: List installed dependencies
@@ -79,9 +83,12 @@ jobs:
         with:
           python-version: '3.14'
           enable-cache: true
+          activate-environment: true
+          cache-dependency-glob: |
+            **/required.txt
+            **/tests.txt
       - name: Install dependencies
         run: |
-          uv venv
           uv pip install -e . --no-deps
           uv pip install -r requirements/required.txt -r requirements/tests.txt
       - name: List installed dependencies
