@@ -8,9 +8,8 @@ import os
 import warnings
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Literal, cast
 
-import aiohttp
 import matplotlib.pyplot as plt
 import pandas as pd
 import rasterio
@@ -19,7 +18,6 @@ from matplotlib.figure import Figure
 from pyproj import CRS
 from rasterio.crs import CRS as RioCRS
 from rasterio.transform import from_bounds
-from tqdm.asyncio import tqdm_asyncio
 
 from .geo import RasterDataset
 from .utils import Path, Sample, lazy_import
@@ -81,7 +79,6 @@ class OpenAerialMap(RasterDataset):
     )
 
     filename_glob = 'OAM-*.tif'
-    filename_regex = r'^OAM-.*\.tif$'
 
     all_bands = ('R', 'G', 'B')
     rgb_bands = ('R', 'G', 'B')
@@ -99,7 +96,7 @@ class OpenAerialMap(RasterDataset):
         download: bool = False,
         search: bool = False,
         image_id: str | None = None,
-        tile_size: int = 256,
+        tile_size: Literal[256, 512] = 256,
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
 
@@ -136,9 +133,6 @@ class OpenAerialMap(RasterDataset):
         self.image_id = image_id
         self.search_results: pd.DataFrame | None = None
         self.tile_size = tile_size
-
-        if tile_size not in (256, 512):
-            raise ValueError('only 256 and 512 are supported for tile_size')
 
         if search:
             if self.bbox is None:
@@ -313,20 +307,17 @@ class OpenAerialMap(RasterDataset):
             tms_url: TMS URL template with {z}, {x}, {y} placeholders
             tiles: List of mercantile tiles to download
         """
-        async with aiohttp.ClientSession() as session:
-            tasks = [
-                self._download_single_tile(session, tms_url, tile) for tile in tiles
-            ]
+        tasks = [self._download_single_tile(tms_url, tile) for tile in tiles]
+        total = len(tasks)
 
-            await tqdm_asyncio.gather(*tasks, desc='Downloading Tiles', leave=False)
+        for i, task in enumerate(asyncio.as_completed(tasks), 1):
+            await task
+            print(f'Downloading {i}/{total} download done')
 
-    async def _download_single_tile(
-        self, session: aiohttp.ClientSession, tms_url: str, tile: Any
-    ) -> None:
+    async def _download_single_tile(self, tms_url: str, tile: Any) -> None:
         """Download and georeference a single tile.
 
         Args:
-            session: aiohttp client session
             tms_url: TMS URL template
             tile: mercantile tile to download
         """
@@ -340,22 +331,20 @@ class OpenAerialMap(RasterDataset):
             return
 
         try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with session.get(url, timeout=timeout) as response:
-                if response.status != 200:
-                    warnings.warn(
-                        f'Failed to download tile {tile}: HTTP {response.status}',
-                        UserWarning,
-                    )
-                    return
+            response = await asyncio.to_thread(requests.get, url, timeout=30)
+            if response.status_code != 200:
+                warnings.warn(
+                    f'Failed to download tile {tile}: HTTP {response.status_code}',
+                    UserWarning,
+                )
+                return
 
-                tile_data = await response.read()
-                with open(filepath, 'wb') as f:
-                    f.write(tile_data)
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
 
-                self._georeference_tile(filepath, tile)
+            self._georeference_tile(filepath, tile)
 
-        except (aiohttp.ClientError, OSError) as e:
+        except (requests.RequestException, OSError) as e:
             warnings.warn(f'Error downloading tile {tile}: {e}', UserWarning)
 
     def _georeference_tile(self, filepath: str, tile: Any) -> None:
