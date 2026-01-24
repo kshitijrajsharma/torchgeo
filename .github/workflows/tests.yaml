@@ -29,6 +29,7 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: |
+          uv venv
           uv pip install -e . --no-deps
           uv pip install -r requirements/required.txt -r requirements/datasets.txt -r requirements/models.txt -r requirements/tests.txt
       - name: List installed dependencies
@@ -54,6 +55,7 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: |
+          uv venv
           uv pip install -e . --no-deps
           uv pip install -r requirements/min-reqs.old
       - name: List installed dependencies
@@ -79,6 +81,7 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: |
+          uv venv
           uv pip install -e . --no-deps
           uv pip install -r requirements/required.txt -r requirements/tests.txt
       - name: List installed dependencies
