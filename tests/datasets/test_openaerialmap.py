@@ -15,14 +15,14 @@ import torch
 import torch.nn as nn
 from rasterio.errors import RasterioIOError
 
-mercantile = pytest.importorskip('mercantile')
-
 from torchgeo.datasets import (
     DatasetNotFoundError,
     IntersectionDataset,
     OpenAerialMap,
     UnionDataset,
 )
+
+mercantile = pytest.importorskip('mercantile')
 
 
 class TestOpenAerialMap:
@@ -226,9 +226,7 @@ class TestOpenAerialMap:
         dataset.tile_size = 512
 
         mock_post = MagicMock()
-        monkeypatch.setattr(
-            'torchgeo.datasets.openaerialmap.requests.post', mock_post
-        )
+        monkeypatch.setattr('torchgeo.datasets.openaerialmap.requests.post', mock_post)
 
         mock_post.return_value.json.return_value = {
             'features': [{'properties': {}, 'assets': {'visual': {'href': 'src'}}}]
@@ -263,7 +261,7 @@ class TestOpenAerialMap:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.content = b'fake_tiff_data'
-            
+
             monkeypatch.setattr('requests.get', MagicMock(return_value=mock_response))
 
             mock_geo = MagicMock()
@@ -271,7 +269,7 @@ class TestOpenAerialMap:
 
             tile = mercantile.Tile(x=1, y=1, z=1)
             await dataset._download_tiles_async('http://tms/{z}/{x}/{y}', [tile])
-            
+
             assert mock_geo.called
             assert (tmp_path / 'OAM-1-1-1.tif').exists()
 
@@ -292,7 +290,7 @@ class TestOpenAerialMap:
 
         mock_open = MagicMock()
         mock_open.__enter__.return_value = mock_ds
-        
+
         monkeypatch.setattr('rasterio.open', MagicMock(return_value=mock_open))
 
         dataset._georeference_tile(str(filepath), tile)
@@ -311,12 +309,12 @@ class TestOpenAerialMap:
             filepath.touch()
             mock_requests = MagicMock()
             monkeypatch.setattr('requests.get', mock_requests)
-            
+
             await dataset._download_single_tile('url', tile)
             assert mock_requests.call_count == 0
 
             filepath.unlink()
-            
+
             mock_response_404 = MagicMock()
             mock_response_404.status_code = 404
             mock_requests.return_value = mock_response_404
@@ -337,9 +335,7 @@ class TestOpenAerialMap:
         filepath.touch()
         tile = mercantile.Tile(x=1, y=1, z=1)
 
-        monkeypatch.setattr(
-            'rasterio.open', MagicMock(side_effect=RasterioIOError)
-        )
+        monkeypatch.setattr('rasterio.open', MagicMock(side_effect=RasterioIOError))
 
         with pytest.warns(UserWarning, match='Could not georeference'):
             dataset._georeference_tile(str(filepath), tile)
