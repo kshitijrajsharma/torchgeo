@@ -93,11 +93,11 @@ dynamic = ["version"]
 [project.optional-dependencies]
 datasets = [
     # h5py 3.10+ required for Python 3.12 wheels
-    "h5py>=3.10,<3.15",
+    "h5py>=3.10,<=3.14.0",
     # laspy 2.5.3+ required for wheels
     "laspy>=2.5.3",
     # netcdf4 1.6.5+ required for Python 3.12 wheels
-    "netcdf4>=1.6.5,<1.8",
+    "netcdf4>=1.6.5,<=1.7.4",
     # pandas 2.1.1+ required for Python 3.12 wheels
     "pandas[parquet]>=2.1.1",
     # pycocotools 2.0.8+ required for Python 3.12 wheels
