@@ -294,7 +294,11 @@ class OpenAerialMap(RasterDataset):
             return None
 
         return self._tile_source_url.format(
-            z='{z}', x='{x}', y='{y}', scale=self.tile_size / 256, source=visual_source
+            z='{z}',
+            x='{x}',
+            y='{y}',
+            scale=int(self.tile_size / 256),
+            source=visual_source,
         )
 
     async def _download_tiles_async(self, tms_url: str, tiles: list[Any]) -> None:
