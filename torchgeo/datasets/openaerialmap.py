@@ -96,7 +96,7 @@ class OpenAerialMap(RasterDataset):
         download: bool = False,
         search: bool = False,
         image_id: str | None = None,
-        tile_size: Literal[256, 512] = 256,
+        tile_size: Literal[256, 512, 768, 1024] = 256,
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
 
@@ -109,7 +109,7 @@ class OpenAerialMap(RasterDataset):
             bbox: bounding box for STAC query as (xmin, ymin, xmax, ymax) in EPSG:4326.
                 Same format as OpenStreetMap for easy dataset combination.
             zoom: zoom level for tiles (1-22), only used when download=True.
-                Higher zoom = more detail. Typical values: 18-20 for high-res drone imagery
+                Higher zoom = more detail. Typical values: 18-20 for high-res drone imagery, higher the zoom , higher the resolution on same tile but it would be more zoomed in. Usually it is advised to increase the tilesize if you want better quality at same zoom. it is advised to check gsd of the image itself before trying to download it.
             max_items: maximum number of STAC items to query.
             transforms: a function/transform that takes an input sample
                 and returns a transformed version. Note: CRS transformation is handled
@@ -148,6 +148,7 @@ class OpenAerialMap(RasterDataset):
             if not 6 <= zoom <= 22:
                 raise ValueError(f'zoom must be between 6 and 22, got {zoom}')
             self._download()
+            print('Download complete.')
 
         # If 'crs' is None, it defaults to EPSG:3857 (Web Mercator), because 3857 makes logical sense for tiles and web maps.
         super().__init__(
@@ -293,11 +294,7 @@ class OpenAerialMap(RasterDataset):
             return None
 
         return self._tile_source_url.format(
-            z='{z}',
-            x='{x}',
-            y='{y}',
-            scale=1 if self.tile_size == 256 else 2,
-            source=visual_source,
+            z='{z}', x='{x}', y='{y}', scale=self.tile_size / 256, source=visual_source
         )
 
     async def _download_tiles_async(self, tms_url: str, tiles: list[Any]) -> None:
@@ -309,10 +306,10 @@ class OpenAerialMap(RasterDataset):
         """
         tasks = [self._download_single_tile(tms_url, tile) for tile in tiles]
         total = len(tasks)
+        print(f'Starting download of {total} tiles...')
 
         for i, task in enumerate(asyncio.as_completed(tasks), 1):
             await task
-            print(f'Downloading {i}/{total} download done')
 
     async def _download_single_tile(self, tms_url: str, tile: Any) -> None:
         """Download and georeference a single tile.
