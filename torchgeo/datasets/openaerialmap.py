@@ -26,7 +26,7 @@ from .utils import Path, Sample
 
 
 class TileUtils:
-    """Compact mercantile-compatible tile utilities. This is to avoid deps on mercantile as we are only using few functions. Credit of this code block goes to contributors of mercantile. Source & Cite : # https://github.com/mapbox/mercantile/blob/5975e1c0e1ec58e99f8e5770c975796e44d96b53/mercantile/__init__.py"""
+    """Compact mercantile-compatible tile utilities. This is to avoid deps on mercantile as we are only using few functions. Credit of this code block goes to contributors of mercantile. Source & Cite : # https://github.com/mapbox/mercantile/blob/5975e1c0e1ec58e99f8e5770c975796e44d96b53/mercantile/__init__.py."""
 
     LL_EPSILON = 1e-11
     EPSILON = 1e-14
@@ -36,10 +36,12 @@ class TileUtils:
 
     @staticmethod
     def _truncate_lnglat(lng: float, lat: float) -> tuple[float, float]:
+        """Truncate longitude and latitude to valid ranges."""
         return max(-180.0, min(180.0, lng)), max(-90.0, min(90.0, lat))
 
     @classmethod
     def _lng_lat_to_tile_frac(cls, lng: float, lat: float) -> tuple[float, float]:
+        """Convert longitude and latitude to fractional tile coordinates."""
         x = lng / 360.0 + 0.5
         sinlat = math.sin(math.radians(lat))
         if abs(sinlat) >= 1.0:
@@ -51,6 +53,7 @@ class TileUtils:
     def tile(
         cls, lng: float, lat: float, zoom: int, truncate: bool = False
     ) -> 'TileUtils.Tile':
+        """Convert longitude and latitude to a mercantile tile at a given zoom level."""
         if truncate:
             lng, lat = cls._truncate_lnglat(lng, lat)
         x, y = cls._lng_lat_to_tile_frac(lng, lat)
@@ -58,17 +61,18 @@ class TileUtils:
         xtile = (
             0
             if x <= 0
-            else (int(Z2 - 1) if x >= 1 else int(math.floor((x + cls.EPSILON) * Z2)))
+            else (int(Z2 - 1) if x >= 1 else (math.floor((x + cls.EPSILON) * Z2)))
         )
         ytile = (
             0
             if y <= 0
-            else (int(Z2 - 1) if y >= 1 else int(math.floor((y + cls.EPSILON) * Z2)))
+            else (int(Z2 - 1) if y >= 1 else (math.floor((y + cls.EPSILON) * Z2)))
         )
         return cls.Tile(xtile, ytile, zoom)
 
     @classmethod
     def bounds(cls, t: 'TileUtils.Tile') -> 'TileUtils.LngLatBbox':
+        """Get the bounding box of a mercantile tile."""
         Z2 = 2**t.z
         west = t.x / Z2 * 360.0 - 180.0
         north = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * t.y / Z2))))
@@ -86,6 +90,7 @@ class TileUtils:
         zoom: int,
         truncate: bool = False,
     ) -> Iterator['TileUtils.Tile']:
+        """Generate mercantile tiles covering a bounding box at a given zoom level."""
         if truncate:
             west, south = cls._truncate_lnglat(west, south)
             east, north = cls._truncate_lnglat(east, north)
