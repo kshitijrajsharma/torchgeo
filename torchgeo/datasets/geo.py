@@ -1088,6 +1088,11 @@ class VectorDataset(GeoDataset):
                             out_shape=(round(height), round(width)),
                             transform=transform,
                         )
+
+                        if mask.max() == 0:
+                            # Skip empty masks
+                            continue
+
                         mask_list.append(mask)
 
                     labels = np.array(label_list).astype(np.int32)
