@@ -35,14 +35,13 @@ jobs:
             requirements/tests.txt
       - name: Install dependencies
         run: |
-          uv pip install -e . --no-deps
           uv pip install -r requirements/required.txt -r requirements/datasets.txt -r requirements/models.txt -r requirements/tests.txt
       - name: List installed dependencies
         run: uv pip list
       - name: Run checks
         run: |
           uv run --no-sync pytest --cov=torchgeo --cov-report=xml
-          uv run --no-sync torchgeo --help
+          uv run --no-sync python -m torchgeo --help
       - name: Report coverage
         uses: codecov/codecov-action@v5.5.2
         with:
@@ -63,14 +62,13 @@ jobs:
             requirements/min-reqs.old
       - name: Install dependencies
         run: |
-          uv pip install -e . --no-deps
           uv pip install -r requirements/min-reqs.old
       - name: List installed dependencies
         run: uv pip list
       - name: Run checks
         run: |
           uv run --no-sync pytest --cov=torchgeo --cov-report=xml
-          uv run --no-sync torchgeo --help
+          uv run --no-sync python -m torchgeo --help
       - name: Report coverage
         uses: codecov/codecov-action@v5.5.2
         with:
@@ -92,14 +90,13 @@ jobs:
             requirements/tests.txt
       - name: Install dependencies
         run: |
-          uv pip install -e . --no-deps
           uv pip install -r requirements/required.txt -r requirements/tests.txt
       - name: List installed dependencies
         run: uv pip list
       - name: Run checks
         run: |
           uv run --no-sync pytest --cov=torchgeo --cov-report=xml
-          uv run --no-sync torchgeo --help
+          uv run --no-sync python -m torchgeo --help
       - name: Report coverage
         uses: codecov/codecov-action@v5.5.2
         with:
