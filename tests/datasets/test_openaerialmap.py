@@ -21,8 +21,7 @@ from torchgeo.datasets import (
     OpenAerialMap,
     UnionDataset,
 )
-
-mercantile = pytest.importorskip('mercantile')
+from torchgeo.datasets.openaerialmap import TileUtils
 
 
 class TestOpenAerialMap:
@@ -40,7 +39,7 @@ class TestOpenAerialMap:
         x = dataset[dataset.bounds]
         assert isinstance(x, dict)
         assert isinstance(x['image'], torch.Tensor)
-        assert x['image'].shape[0] == 3  # RGB bands
+        assert x['image'].shape[0] == 3
 
     def test_len(self, dataset: OpenAerialMap) -> None:
         assert len(dataset) == 2
@@ -267,7 +266,7 @@ class TestOpenAerialMap:
             mock_geo = MagicMock()
             monkeypatch.setattr(dataset, '_georeference_tile', mock_geo)
 
-            tile = mercantile.Tile(x=1, y=1, z=1)
+            tile = TileUtils.Tile(x=1, y=1, z=1)
             await dataset._download_tiles_async('http://tms/{z}/{x}/{y}', [tile])
 
             assert mock_geo.called
@@ -280,7 +279,7 @@ class TestOpenAerialMap:
     ) -> None:
         filepath = tmp_path / 'test.tif'
         filepath.touch()
-        tile = mercantile.Tile(x=1, y=1, z=1)
+        tile = TileUtils.Tile(x=1, y=1, z=1)
 
         mock_ds = MagicMock()
         mock_ds.width = 256
@@ -303,7 +302,7 @@ class TestOpenAerialMap:
         dataset.paths = tmp_path
 
         async def wrapper() -> None:
-            tile = mercantile.Tile(x=2, y=2, z=2)
+            tile = TileUtils.Tile(x=2, y=2, z=2)
             filepath = tmp_path / 'OAM-2-2-2.tif'
 
             filepath.touch()
@@ -333,7 +332,7 @@ class TestOpenAerialMap:
     ) -> None:
         filepath = tmp_path / 'test.tif'
         filepath.touch()
-        tile = mercantile.Tile(x=1, y=1, z=1)
+        tile = TileUtils.Tile(x=1, y=1, z=1)
 
         monkeypatch.setattr('rasterio.open', MagicMock(side_effect=RasterioIOError))
 

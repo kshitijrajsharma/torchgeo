@@ -4,9 +4,11 @@
 """OpenAerialMap dataset."""
 
 import asyncio
+import math
 import os
 import warnings
-from collections.abc import Callable, Iterable
+from collections import namedtuple
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar, Literal, cast
 
@@ -20,7 +22,88 @@ from rasterio.crs import CRS as RioCRS
 from rasterio.transform import from_bounds
 
 from .geo import RasterDataset
-from .utils import Path, Sample, lazy_import
+from .utils import Path, Sample
+
+
+class TileUtils:
+    """Compact mercantile-compatible tile utilities. This is to avoid deps on mercantile as we are only using few functions. Credit of this code block goes to contributors of mercantile. Source & Cite : # https://github.com/mapbox/mercantile/blob/5975e1c0e1ec58e99f8e5770c975796e44d96b53/mercantile/__init__.py"""
+
+    LL_EPSILON = 1e-11
+    EPSILON = 1e-14
+
+    Tile = namedtuple('Tile', ['x', 'y', 'z'])
+    LngLatBbox = namedtuple('LngLatBbox', ['west', 'south', 'east', 'north'])
+
+    @staticmethod
+    def _truncate_lnglat(lng: float, lat: float) -> tuple[float, float]:
+        return max(-180.0, min(180.0, lng)), max(-90.0, min(90.0, lat))
+
+    @classmethod
+    def _lng_lat_to_tile_frac(cls, lng: float, lat: float) -> tuple[float, float]:
+        x = lng / 360.0 + 0.5
+        sinlat = math.sin(math.radians(lat))
+        if abs(sinlat) >= 1.0:
+            raise ValueError(f'Invalid latitude: {lat}')
+        y = 0.5 - 0.25 * math.log((1.0 + sinlat) / (1.0 - sinlat)) / math.pi
+        return x, y
+
+    @classmethod
+    def tile(
+        cls, lng: float, lat: float, zoom: int, truncate: bool = False
+    ) -> 'TileUtils.Tile':
+        if truncate:
+            lng, lat = cls._truncate_lnglat(lng, lat)
+        x, y = cls._lng_lat_to_tile_frac(lng, lat)
+        Z2 = 2**zoom
+        xtile = (
+            0
+            if x <= 0
+            else (int(Z2 - 1) if x >= 1 else int(math.floor((x + cls.EPSILON) * Z2)))
+        )
+        ytile = (
+            0
+            if y <= 0
+            else (int(Z2 - 1) if y >= 1 else int(math.floor((y + cls.EPSILON) * Z2)))
+        )
+        return cls.Tile(xtile, ytile, zoom)
+
+    @classmethod
+    def bounds(cls, t: 'TileUtils.Tile') -> 'TileUtils.LngLatBbox':
+        Z2 = 2**t.z
+        west = t.x / Z2 * 360.0 - 180.0
+        north = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * t.y / Z2))))
+        east = (t.x + 1) / Z2 * 360.0 - 180.0
+        south = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (t.y + 1) / Z2))))
+        return cls.LngLatBbox(west, south, east, north)
+
+    @classmethod
+    def tiles(
+        cls,
+        west: float,
+        south: float,
+        east: float,
+        north: float,
+        zoom: int,
+        truncate: bool = False,
+    ) -> Iterator['TileUtils.Tile']:
+        if truncate:
+            west, south = cls._truncate_lnglat(west, south)
+            east, north = cls._truncate_lnglat(east, north)
+
+        bboxes = (
+            [(-180.0, south, east, north), (west, south, 180.0, north)]
+            if west > east
+            else [(west, south, east, north)]
+        )
+
+        for w, s, e, n in bboxes:
+            w, s = max(-180.0, w), max(-85.051129, s)
+            e, n = min(180.0, e), min(85.051129, n)
+            ul = cls.tile(w, n, zoom)
+            lr = cls.tile(e - cls.LL_EPSILON, s + cls.LL_EPSILON, zoom)
+            for i in range(ul.x, lr.x + 1):
+                for j in range(ul.y, lr.y + 1):
+                    yield cls.Tile(i, j, zoom)
 
 
 class OpenAerialMap(RasterDataset):
@@ -119,7 +202,7 @@ class OpenAerialMap(RasterDataset):
             search: if True, query STAC API for available imagery and return results in
                 self.search_results. Skips dataset initialization if download=False.
             image_id: optional STAC item ID to download specific imagery
-            tile_size: size of the tiles to download (256 or 512)
+            tile_size: size of the tiles to download (supported : 256 , 512, 768, 1024 ; Do verify they exists in the remote image)
 
         Raises:
             DatasetNotFoundError: If dataset is not found and download=False.
@@ -231,8 +314,7 @@ class OpenAerialMap(RasterDataset):
             return
 
         # we use truncate=True to avoid tiles outside the bbox , just to make sure there won't be corning tiles
-        mercantile = lazy_import('mercantile')
-        tiles = list(mercantile.tiles(*self.bbox, self.zoom, truncate=True))
+        tiles = list(TileUtils.tiles(*self.bbox, self.zoom, truncate=True))
 
         def run_in_thread() -> None:
             loop = asyncio.new_event_loop()
@@ -266,10 +348,6 @@ class OpenAerialMap(RasterDataset):
             )
             response.raise_for_status()
             data = response.json()
-        except requests.RequestException as e:
-            raise RuntimeError(f'Failed to query STAC API: {e}') from e
-        except (ValueError, KeyError) as e:
-            raise RuntimeError(f'Failed to query STAC API: {e}') from e
         except Exception as e:
             raise RuntimeError(f'Failed to query STAC API: {e}') from e
 
@@ -358,8 +436,7 @@ class OpenAerialMap(RasterDataset):
             filepath: path to tile file
             tile: mercantile tile for calculating bounds
         """
-        mercantile = lazy_import('mercantile')
-        bounds = mercantile.bounds(tile)
+        bounds = TileUtils.bounds(tile)
         try:
             with rasterio.open(filepath, 'r+') as dataset:
                 dataset.transform = from_bounds(

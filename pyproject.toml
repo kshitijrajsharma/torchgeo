@@ -95,8 +95,6 @@ datasets = [
     "h5py>=3.10",
     # laspy 2.5.3+ required for wheels
     "laspy>=2.5.3",
-    # mercantile 1.2+ required for OpenAerialMap
-    "mercantile>=1.2.1",
     # netcdf4 1.6.5+ required for Python 3.12 wheels
     "netcdf4>=1.6.5",
     # pandas 2.1.1+ required for Python 3.12 wheels

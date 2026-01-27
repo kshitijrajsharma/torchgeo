@@ -25,7 +25,6 @@ typing-extensions==4.8.0
 # datasets
 h5py==3.10.0
 laspy==2.5.3
-mercantile==1.2.1
 netcdf4==1.6.5
 pycocotools==2.0.8
 rioxarray==0.14.1
