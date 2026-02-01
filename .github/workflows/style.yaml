@@ -53,10 +53,10 @@ jobs:
           activate-environment: true
           cache-dependency-glob: |
             requirements/style.txt
-      - name: Install pip dependencies
+      - name: Install dependencies
         run: |
           uv run pip install -r requirements/style.txt
-      - name: List pip dependencies
+      - name: List dependencies
         run: uv pip list
       - name: Run ruff checks
         run: |

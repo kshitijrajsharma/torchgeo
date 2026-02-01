@@ -15,9 +15,9 @@ jobs:
         with:
           python-version: '3.14'
           activate-environment: true
-      - name: Install pip dependencies
+      - name: Install dependencies
         run: uv pip install build
-      - name: List pip dependencies
+      - name: List dependencies
         run: uv pip list
       - name: Build project
         run: python3 -m build

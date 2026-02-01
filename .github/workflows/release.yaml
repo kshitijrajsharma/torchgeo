@@ -27,10 +27,10 @@ jobs:
             requirements/required.txt
             requirements/datasets.txt
             requirements/tests.txt
-      - name: Install pip dependencies
+      - name: Install dependencies
         run: |
           uv pip install .[datasets,tests]
-      - name: List pip dependencies
+      - name: List dependencies
         run: uv pip list
       - name: Run integration checks
         run: |
@@ -55,10 +55,10 @@ jobs:
             requirements/required.txt
             requirements/docs.txt
             requirements/tests.txt
-      - name: Install pip dependencies
+      - name: Install dependencies
         run: |
           uv pip install .[docs,tests] planetary_computer pystac tensorboard h5py scikit-learn
-      - name: List pip dependencies
+      - name: List dependencies
         run: uv pip list
       - name: Run notebook checks
         run: pytest --nbmake --durations=10 docs/tutorials
