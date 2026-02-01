@@ -20,7 +20,7 @@ jobs:
       - name: List pip dependencies
         run: uv pip list
       - name: Build project
-        run: uv run python -m build
+        run: python3 -m build
       - name: Upload artifacts
         uses: actions/upload-artifact@v6.0.0
         with:

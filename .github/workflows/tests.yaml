@@ -68,7 +68,7 @@ jobs:
       - name: Run checks
         run: |
           pytest --cov=torchgeo --cov-report=xml
-          python -m torchgeo --help
+          python3 -m torchgeo --help
       - name: Report coverage
         uses: codecov/codecov-action@v5.5.2
         with:
@@ -96,7 +96,7 @@ jobs:
       - name: Run checks
         run: |
           pytest --cov=torchgeo --cov-report=xml
-          python -m torchgeo --help
+          python3 -m torchgeo --help
       - name: Report coverage
         uses: codecov/codecov-action@v5.5.2
         with:
