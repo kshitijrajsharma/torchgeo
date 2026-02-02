@@ -31,10 +31,8 @@ jobs:
             requirements/required.txt
             requirements/docs.txt
             requirements/tests.txt
-
       - name: Install dependencies
-        run: |
-          uv pip install -r requirements/required.txt -r requirements/docs.txt -r requirements/tests.txt planetary_computer pystac tensorboard h5py scikit-learn .
+        run: uv pip install -r requirements/required.txt -r requirements/docs.txt -r requirements/tests.txt planetary_computer pystac tensorboard h5py scikit-learn .
       - name: List dependencies
         run: uv pip list
       - name: Run notebook checks

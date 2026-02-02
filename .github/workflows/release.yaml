@@ -28,8 +28,7 @@ jobs:
             requirements/datasets.txt
             requirements/tests.txt
       - name: Install dependencies
-        run: |
-          uv pip install .[datasets,tests]
+        run: uv pip install .[datasets,tests]
       - name: List dependencies
         run: uv pip list
       - name: Run integration checks
@@ -56,8 +55,7 @@ jobs:
             requirements/docs.txt
             requirements/tests.txt
       - name: Install dependencies
-        run: |
-          uv pip install .[docs,tests] planetary_computer pystac tensorboard h5py scikit-learn
+        run: uv pip install .[docs,tests] planetary_computer pystac tensorboard h5py scikit-learn
       - name: List dependencies
         run: uv pip list
       - name: Run notebook checks
