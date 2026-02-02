@@ -292,7 +292,7 @@ class TestOpenAerialMap:
             MagicMock(return_value=mock_response),
         )
 
-        with pytest.raises(ValueError, match='Bounding box .* is required'):
+        with pytest.raises(ValueError, match=r'Bounding box .* is required'):
             OpenAerialMap(tmp_path, image_id='test_id', download=True)
 
     def test_fetch_tms_url_variations(
@@ -388,7 +388,9 @@ class TestOpenAerialMap:
 
             mock_ds = MagicMock()
             mock_ds.crs = MagicMock()
-            mock_open = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_ds)))
+            mock_open = MagicMock(
+                return_value=MagicMock(__enter__=MagicMock(return_value=mock_ds))
+            )
             monkeypatch.setattr('rasterio.open', mock_open)
 
             await dataset._download_single_tile('url', tile)

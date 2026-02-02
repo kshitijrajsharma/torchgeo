@@ -288,7 +288,7 @@ class OpenAerialMap(RasterDataset):
         try:
             resp = requests.post(
                 f'{self._stac_api_url}/search',
-                json={'bbox': list(self.bbox), 'limit': max(self.max_items, 20)},
+                json={'bbox': list(self.bbox), 'limit': self.max_items},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -429,6 +429,7 @@ class OpenAerialMap(RasterDataset):
 
         for i, task in enumerate(asyncio.as_completed(tasks), 1):
             await task
+        print(f'Finished downloading {total} tiles.')
 
     async def _download_single_tile(self, tms_url: str, tile: TileUtils.Tile) -> None:
         """Download and georeference a single tile.
@@ -531,7 +532,7 @@ class OpenAerialMap(RasterDataset):
             rgb = rgb.clamp(0, 1)
 
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
-        ax.imshow(rgb, cmap='gray' if rgb.ndim == 2 else None)
+        ax.imshow(rgb)
         ax.axis('off')
 
         if show_titles:
