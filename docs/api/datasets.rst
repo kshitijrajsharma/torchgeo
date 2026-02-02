@@ -466,6 +466,7 @@ OSCD
 ^^^^
 
 .. autoclass:: OSCD
+.. autoclass:: OSCD100
 
 PASTIS
 ^^^^^^

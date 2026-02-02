@@ -320,6 +320,7 @@ class CDL(RasterDataset):
 
     def _download(self) -> None:
         """Download the dataset."""
+        assert isinstance(self.paths, str | os.PathLike)
         for year in self.years:
             download_url(
                 self.url.format(year),
@@ -341,7 +342,7 @@ class CDL(RasterDataset):
         """Plot a sample from the dataset.
 
         Args:
-            sample: a sample returned by :meth:`RasterDataset.__getitem__`
+            sample: a sample returned by :meth:`__getitem__`
             show_titles: flag indicating whether to show titles above each panel
             suptitle: optional string to use as a suptitle
 

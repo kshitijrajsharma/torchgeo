@@ -129,8 +129,8 @@ from .nlcd import NLCD
 from .openaerialmap import OpenAerialMap
 from .openbuildings import OpenBuildings
 from .openstreetmap import OpenStreetMap
-from .oscd import OSCD
-from .pastis import PASTIS
+from .oscd import OSCD, OSCD100
+from .pastis import PASTIS, PASTIS100
 from .patternnet import PatternNet
 from .potsdam import Potsdam2D
 from .presto import PrestoEmbeddings
@@ -209,7 +209,9 @@ __all__ = (
     'NCCM',
     'NLCD',
     'OSCD',
+    'OSCD100',
     'PASTIS',
+    'PASTIS100',
     'PRISMA',
     'RESISC45',
     'SEN12MS',

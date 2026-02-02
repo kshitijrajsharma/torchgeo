@@ -3,6 +3,7 @@
 
 """Northeastern China Crop Map Dataset."""
 
+import os
 from collections.abc import Callable, Iterable
 from typing import ClassVar
 
@@ -160,6 +161,7 @@ class NCCM(RasterDataset):
 
     def _download(self) -> None:
         """Download the dataset."""
+        assert isinstance(self.paths, str | os.PathLike)
         for year in self.years:
             download_url(
                 self.urls[year],
@@ -174,7 +176,7 @@ class NCCM(RasterDataset):
         """Plot a sample from the dataset.
 
         Args:
-            sample: a sample returned by :meth:`NCCM.__getitem__`
+            sample: a sample returned by :meth:`__getitem__`
             show_titles: flag indicating whether to show titles above each panel
             suptitle: optional string to use as a suptitle
 
