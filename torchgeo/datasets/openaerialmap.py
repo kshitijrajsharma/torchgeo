@@ -229,7 +229,7 @@ class OpenAerialMap(RasterDataset):
                 (defaults to resolution of first file found)
             bbox: bounding box for STAC query as (xmin, ymin, xmax, ymax) in EPSG:4326.
                 Same format as OpenStreetMap for easy dataset combination.
-            zoom: zoom level for tiles (6-22), only used when download=True.
+            zoom: zoom level for tiles (15-23), only used when download=True.
                 Higher zoom = more detail. Typical values: 18-20 for high-res
                 drone imagery. Higher zoom gives higher resolution but covers
                 less area per tile. Consider increasing tile_size for better
