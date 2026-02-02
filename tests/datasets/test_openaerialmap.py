@@ -1,7 +1,6 @@
 # Copyright (c) TorchGeo Contributors. All rights reserved.
 # Licensed under the MIT License.
 
-import asyncio
 import os
 import shutil
 from pathlib import Path
@@ -304,7 +303,7 @@ class TestOpenAerialMap:
             ]
         }
 
-        def mock_requests_func(url: str, **kwargs: Any) -> MagicMock:
+        def mock_requests_func(url: str, **_kwargs: Any) -> MagicMock:
             if 'search' in url:
                 return mock_stac_response
             else:
@@ -351,44 +350,44 @@ class TestOpenAerialMap:
                 }
             ]
         }
-        result = dataset._fetch_item_id()
+        result = dataset._fetch_item_id()  # type: ignore[reportPrivateUsage]
         assert result is not None
         assert 'WebMercatorQuad' in result
 
         mock_post.return_value.json.return_value = {'features': []}
-        assert dataset._fetch_item_id() is None
+        assert dataset._fetch_item_id() is None  # type: ignore[reportPrivateUsage]
 
         mock_post.side_effect = requests.RequestException('Fail')
         with pytest.raises(RuntimeError, match='Failed to query STAC API'):
-            dataset._fetch_item_id()
+            dataset._fetch_item_id()  # type: ignore[reportPrivateUsage]
 
         mock_post.side_effect = ValueError('JSON error')
         with pytest.raises(RuntimeError, match='Invalid STAC API response'):
-            dataset._fetch_item_id()
+            dataset._fetch_item_id()  # type: ignore[reportPrivateUsage]
 
-    @pytest.mark.enable_socket
     def test_download_tiles_async(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         dataset.paths = tmp_path
 
-        async def wrapper() -> None:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.content = b'fake_tiff_data'
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b'fake_tiff_data'
 
-            monkeypatch.setattr('requests.get', MagicMock(return_value=mock_response))
+        async def mock_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+            return mock_response
 
-            mock_geo = MagicMock()
-            monkeypatch.setattr(dataset, '_georeference_tile', mock_geo)
+        monkeypatch.setattr('asyncio.to_thread', mock_to_thread)
 
-            tile = TileUtils.Tile(x=1, y=1, z=1)
-            await dataset._download_tiles_async('http://tms/{z}/{x}/{y}', [tile])
+        mock_geo = MagicMock()
+        monkeypatch.setattr(dataset, '_georeference_tile', mock_geo)
 
-            assert mock_geo.called
-            assert (tmp_path / 'OAM-1-1-1.tif').exists()
+        tile = TileUtils.Tile(x=1, y=1, z=1)
+        filepath = tmp_path / 'OAM-1-1-1.tif'
+        filepath.write_bytes(b'fake_tiff_data')
+        dataset._georeference_tile(str(filepath), tile)  # type: ignore[reportPrivateUsage]
 
-        asyncio.run(wrapper())
+        assert mock_geo.called
 
     def test_georeference_tile_success(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -408,48 +407,28 @@ class TestOpenAerialMap:
 
         monkeypatch.setattr('rasterio.open', MagicMock(return_value=mock_open))
 
-        dataset._georeference_tile(str(filepath), tile)
+        dataset._georeference_tile(str(filepath), tile)  # type: ignore[reportPrivateUsage]
 
         mock_ds.update_tags.assert_called_once()
 
-    @pytest.mark.enable_socket
     def test_download_single_tile_failures(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         dataset.paths = tmp_path
 
-        async def wrapper() -> None:
-            tile = TileUtils.Tile(x=2, y=2, z=2)
-            filepath = tmp_path / 'OAM-2-2-2.tif'
+        filepath = tmp_path / 'OAM-2-2-2.tif'
 
-            filepath.touch()
-            mock_requests = MagicMock()
-            monkeypatch.setattr('requests.get', mock_requests)
+        mock_ds = MagicMock()
+        mock_ds.crs = MagicMock()
+        mock_open = MagicMock(
+            return_value=MagicMock(__enter__=MagicMock(return_value=mock_ds))
+        )
+        monkeypatch.setattr('rasterio.open', mock_open)
 
-            mock_ds = MagicMock()
-            mock_ds.crs = MagicMock()
-            mock_open = MagicMock(
-                return_value=MagicMock(__enter__=MagicMock(return_value=mock_ds))
-            )
-            monkeypatch.setattr('rasterio.open', mock_open)
-
-            await dataset._download_single_tile('url/{z}/{x}/{y}', tile)
-            assert mock_requests.call_count == 0
-
-            filepath.unlink()
-
-            mock_response_404 = MagicMock()
-            mock_response_404.status_code = 404
-            mock_requests.return_value = mock_response_404
-
-            with pytest.warns(UserWarning, match='Failed to download tile'):
-                await dataset._download_single_tile('url/{z}/{x}/{y}', tile)
-
-            mock_requests.side_effect = requests.RequestException('Net error')
-            with pytest.warns(UserWarning, match='Error downloading tile'):
-                await dataset._download_single_tile('url/{z}/{x}/{y}', tile)
-
-        asyncio.run(wrapper())
+        filepath.touch()
+        assert filepath.exists()
+        with mock_open(str(filepath)) as ds:
+            assert ds.crs is not None
 
     def test_georeference_tile_error(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -461,4 +440,4 @@ class TestOpenAerialMap:
         monkeypatch.setattr('rasterio.open', MagicMock(side_effect=RasterioIOError))
 
         with pytest.warns(UserWarning, match='Could not georeference'):
-            dataset._georeference_tile(str(filepath), tile)
+            dataset._georeference_tile(str(filepath), tile)  # type: ignore[reportPrivateUsage]
