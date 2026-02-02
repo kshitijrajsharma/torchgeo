@@ -289,6 +289,7 @@ class OpenAerialMap(RasterDataset):
             resp = requests.post(
                 f'{self._stac_api_url}/search',
                 json={'bbox': list(self.bbox), 'limit': self.max_items},
+                headers={'User-Agent': 'torchgeo'},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -377,7 +378,10 @@ class OpenAerialMap(RasterDataset):
 
         try:
             response = requests.post(
-                f'{self._stac_api_url}/search', json=params, timeout=30
+                f'{self._stac_api_url}/search',
+                json=params,
+                headers={'User-Agent': 'torchgeo'},
+                timeout=30,
             )
             response.raise_for_status()
             data = response.json()
@@ -458,7 +462,9 @@ class OpenAerialMap(RasterDataset):
             os.unlink(filepath)
 
         try:
-            response = await asyncio.to_thread(requests.get, url, timeout=30)
+            response = await asyncio.to_thread(
+                requests.get, url, headers={'User-Agent': 'torchgeo'}, timeout=30
+            )
             if response.status_code != 200:
                 warnings.warn(
                     f'Failed to download tile {tile}: HTTP {response.status_code}',
