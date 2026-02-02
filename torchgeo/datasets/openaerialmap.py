@@ -196,8 +196,12 @@ class OpenAerialMap(RasterDataset):
                 (defaults to resolution of first file found)
             bbox: bounding box for STAC query as (xmin, ymin, xmax, ymax) in EPSG:4326.
                 Same format as OpenStreetMap for easy dataset combination.
-            zoom: zoom level for tiles (1-22), only used when download=True.
-                Higher zoom = more detail. Typical values: 18-20 for high-res drone imagery, higher the zoom , higher the resolution on same tile but it would be more zoomed in. Usually it is advised to increase the tilesize if you want better quality at same zoom. it is advised to check gsd of the image itself before trying to download it.
+            zoom: zoom level for tiles (6-22), only used when download=True.                                                                                           
+                Higher zoom = more detail. Typical values: 18-20 for high-res                                                                                          
+                drone imagery. Higher zoom gives higher resolution but covers                                                                                          
+                less area per tile. Consider increasing tile_size for better                                                                                           
+                quality at the same zoom. Check the GSD of the image before                                                                                            
+                downloading.                                                                                                                                           
             max_items: maximum number of STAC items to query.
             transforms: a function/transform that takes an input sample
                 and returns a transformed version. Note: CRS transformation is handled
@@ -318,7 +322,7 @@ class OpenAerialMap(RasterDataset):
             )
             return
 
-        # we use truncate=True to avoid tiles outside the bbox , just to make sure there won't be corning tiles
+        # we use truncate=True to avoid tiles outside the bbox, just to make sure there won't be corner tiles
         tiles = list(TileUtils.tiles(*self.bbox, self.zoom, truncate=True))
 
         def run_in_thread() -> None:
