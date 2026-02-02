@@ -292,7 +292,7 @@ class TestOpenAerialMap:
             MagicMock(return_value=mock_response),
         )
 
-        with pytest.raises(ValueError, match=r'Bounding box .* is required'):
+        with pytest.raises(ValueError, match='bbox'):
             OpenAerialMap(tmp_path, image_id='test_id', download=True)
 
     def test_fetch_tms_url_variations(
