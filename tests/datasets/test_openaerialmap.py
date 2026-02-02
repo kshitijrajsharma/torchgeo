@@ -366,6 +366,7 @@ class TestOpenAerialMap:
         with pytest.raises(RuntimeError, match='Invalid STAC API response'):
             dataset._fetch_item_id()
 
+    @pytest.mark.disable_socket_check
     def test_download_tiles_async(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -411,6 +412,7 @@ class TestOpenAerialMap:
 
         mock_ds.update_tags.assert_called_once()
 
+    @pytest.mark.disable_socket_check
     def test_download_single_tile_failures(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
