@@ -9,7 +9,6 @@ import os
 import warnings
 from collections import namedtuple
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar, Literal, cast
 
 import matplotlib.pyplot as plt
@@ -26,58 +25,76 @@ from .utils import Path, Sample
 
 
 class TileUtils:
-    """Compact mercantile-compatible tile utilities. This is to avoid deps on mercantile as we are only using few functions. Credit of this code block goes to contributors of mercantile. Source & Cite : # https://github.com/mapbox/mercantile/blob/5975e1c0e1ec58e99f8e5770c975796e44d96b53/mercantile/__init__.py."""
+    """Web Mercator tile utilities for XYZ tile calculations.
 
-    LL_EPSILON = 1e-11
-    EPSILON = 1e-14
+    Implements standard Web Mercator (EPSG:3857) tile math for converting
+    between geographic coordinates and tile indices.
+
+    References:
+        * OpenStreetMap Wiki - Slippy map tilenames:
+          https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
+        * Web Mercator / Pseudo-Mercator (EPSG:3857):
+          https://epsg.io/3857
+        * OSGeo Tile Map Service Specification:
+          https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification
+
+    The mathematical formulas implemented here are based on the Spherical Mercator
+    projection, which is documented in the references above.
+    """
 
     Tile = namedtuple('Tile', ['x', 'y', 'z'])
     LngLatBbox = namedtuple('LngLatBbox', ['west', 'south', 'east', 'north'])
-
-    @staticmethod
-    def _truncate_lnglat(lng: float, lat: float) -> tuple[float, float]:
-        """Truncate longitude and latitude to valid ranges."""
-        return max(-180.0, min(180.0, lng)), max(-90.0, min(90.0, lat))
-
-    @classmethod
-    def _lng_lat_to_tile_frac(cls, lng: float, lat: float) -> tuple[float, float]:
-        """Convert longitude and latitude to fractional tile coordinates."""
-        x = lng / 360.0 + 0.5
-        sinlat = math.sin(math.radians(lat))
-        if abs(sinlat) >= 1.0:
-            raise ValueError(f'Invalid latitude: {lat}')
-        y = 0.5 - 0.25 * math.log((1.0 + sinlat) / (1.0 - sinlat)) / math.pi
-        return x, y
 
     @classmethod
     def tile(
         cls, lng: float, lat: float, zoom: int, truncate: bool = False
     ) -> 'TileUtils.Tile':
-        """Convert longitude and latitude to a mercantile tile at a given zoom level."""
+        """Get tile coordinates containing a geographic point.
+
+        Args:
+            lng: Longitude in degrees
+            lat: Latitude in degrees
+            zoom: Zoom level
+            truncate: Clamp coordinates to valid ranges
+
+        Returns:
+            Tile with x, y, z coordinates
+        """
         if truncate:
-            lng, lat = cls._truncate_lnglat(lng, lat)
-        x, y = cls._lng_lat_to_tile_frac(lng, lat)
-        Z2 = 2**zoom
-        xtile = (
-            0
-            if x <= 0
-            else (int(Z2 - 1) if x >= 1 else (math.floor((x + cls.EPSILON) * Z2)))
-        )
-        ytile = (
-            0
-            if y <= 0
-            else (int(Z2 - 1) if y >= 1 else (math.floor((y + cls.EPSILON) * Z2)))
-        )
-        return cls.Tile(xtile, ytile, zoom)
+            lng = max(-180.0, min(180.0, lng))
+            lat = max(-90.0, min(90.0, lat))
+
+        x_frac = (lng + 180.0) / 360.0
+        lat_rad = math.radians(lat)
+        y_frac = (
+            1.0 - math.log(math.tan(lat_rad) + (1.0 / math.cos(lat_rad))) / math.pi
+        ) / 2.0
+
+        n = 2**zoom
+        x = int(min(n - 1, max(0, math.floor(x_frac * n))))
+        y = int(min(n - 1, max(0, math.floor(y_frac * n))))
+
+        return cls.Tile(x, y, zoom)
 
     @classmethod
     def bounds(cls, t: 'TileUtils.Tile') -> 'TileUtils.LngLatBbox':
-        """Get the bounding box of a mercantile tile."""
-        Z2 = 2**t.z
-        west = t.x / Z2 * 360.0 - 180.0
-        north = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * t.y / Z2))))
-        east = (t.x + 1) / Z2 * 360.0 - 180.0
-        south = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (t.y + 1) / Z2))))
+        """Get geographic bounds of a tile.
+
+        Args:
+            t: Tile with x, y, z coordinates
+
+        Returns:
+            Bounding box with west, south, east, north in degrees
+        """
+        n = 2**t.z
+        west = t.x / n * 360.0 - 180.0
+        east = (t.x + 1) / n * 360.0 - 180.0
+
+        north_rad = math.atan(math.sinh(math.pi * (1 - 2 * t.y / n)))
+        south_rad = math.atan(math.sinh(math.pi * (1 - 2 * (t.y + 1) / n)))
+        north = math.degrees(north_rad)
+        south = math.degrees(south_rad)
+
         return cls.LngLatBbox(west, south, east, north)
 
     @classmethod
@@ -90,25 +107,42 @@ class TileUtils:
         zoom: int,
         truncate: bool = False,
     ) -> Iterator['TileUtils.Tile']:
-        """Generate mercantile tiles covering a bounding box at a given zoom level."""
-        if truncate:
-            west, south = cls._truncate_lnglat(west, south)
-            east, north = cls._truncate_lnglat(east, north)
+        """Generate tiles covering a bounding box.
 
-        bboxes = (
-            [(-180.0, south, east, north), (west, south, 180.0, north)]
-            if west > east
-            else [(west, south, east, north)]
-        )
+        Args:
+            west: Western longitude in degrees
+            south: Southern latitude in degrees
+            east: Eastern longitude in degrees
+            north: Northern latitude in degrees
+            zoom: Zoom level
+            truncate: Clamp coordinates to valid ranges
+
+        Yields:
+            Tiles covering the bounding box
+        """
+        if truncate:
+            west = max(-180.0, min(180.0, west))
+            south = max(-90.0, min(90.0, south))
+            east = max(-180.0, min(180.0, east))
+            north = max(-90.0, min(90.0, north))
+
+        if west > east:
+            bboxes = [(-180.0, south, east, north), (west, south, 180.0, north)]
+        else:
+            bboxes = [(west, south, east, north)]
 
         for w, s, e, n in bboxes:
-            w, s = max(-180.0, w), max(-85.051129, s)
-            e, n = min(180.0, e), min(85.051129, n)
-            ul = cls.tile(w, n, zoom)
-            lr = cls.tile(e - cls.LL_EPSILON, s + cls.LL_EPSILON, zoom)
-            for i in range(ul.x, lr.x + 1):
-                for j in range(ul.y, lr.y + 1):
-                    yield cls.Tile(i, j, zoom)
+            w = max(-180.0, w)
+            s = max(-85.051129, s)
+            e = min(180.0, e)
+            n = min(85.051129, n)
+
+            ul_tile = cls.tile(w, n, zoom)
+            lr_tile = cls.tile(e, s, zoom)
+
+            for x in range(ul_tile.x, lr_tile.x + 1):
+                for y in range(ul_tile.y, lr_tile.y + 1):
+                    yield cls.Tile(x, y, zoom)
 
 
 class OpenAerialMap(RasterDataset):
@@ -196,12 +230,12 @@ class OpenAerialMap(RasterDataset):
                 (defaults to resolution of first file found)
             bbox: bounding box for STAC query as (xmin, ymin, xmax, ymax) in EPSG:4326.
                 Same format as OpenStreetMap for easy dataset combination.
-            zoom: zoom level for tiles (6-22), only used when download=True.                                                                                           
-                Higher zoom = more detail. Typical values: 18-20 for high-res                                                                                          
-                drone imagery. Higher zoom gives higher resolution but covers                                                                                          
-                less area per tile. Consider increasing tile_size for better                                                                                           
-                quality at the same zoom. Check the GSD of the image before                                                                                            
-                downloading.                                                                                                                                           
+            zoom: zoom level for tiles (6-22), only used when download=True.
+                Higher zoom = more detail. Typical values: 18-20 for high-res
+                drone imagery. Higher zoom gives higher resolution but covers
+                less area per tile. Consider increasing tile_size for better
+                quality at the same zoom. Check the GSD of the image before
+                downloading.
             max_items: maximum number of STAC items to query.
             transforms: a function/transform that takes an input sample
                 and returns a transformed version. Note: CRS transformation is handled
@@ -211,11 +245,12 @@ class OpenAerialMap(RasterDataset):
             search: if True, query STAC API for available imagery and return results in
                 self.search_results. Skips dataset initialization if download=False.
             image_id: optional STAC item ID to download specific imagery
-            tile_size: size of the tiles to download (supported : 256 , 512, 768, 1024 ; Do verify they exists in the remote image)
+            tile_size: size of the tiles to download (supported : 256 , 512, 768, 1024 );
+                Do verify they exists in the remote image source.
 
         Raises:
             DatasetNotFoundError: If dataset is not found and download=False.
-            ValueError: If download=True but bbox is not provided.
+            ValueError: If download=True but neither bbox nor image_id is provided.
         """
         self.paths = paths
         self.bbox = bbox
@@ -315,26 +350,15 @@ class OpenAerialMap(RasterDataset):
             return
 
         if self.bbox is None:
-            warnings.warn(
-                'Bounding box (bbox) is required to calculate tiles, even when image_id is provided.',
-                UserWarning,
-                stacklevel=2,
+            raise ValueError(
+                'Bounding box (bbox) is required to calculate tiles. '
+                'Please provide a bbox when initializing OpenAerialMap, even when image_id is provided.'
             )
-            return
 
         # we use truncate=True to avoid tiles outside the bbox, just to make sure there won't be corner tiles
         tiles = list(TileUtils.tiles(*self.bbox, self.zoom, truncate=True))
 
-        def run_in_thread() -> None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._download_tiles_async(tms_url, tiles))
-            finally:
-                loop.close()
-
-        with ThreadPoolExecutor() as executor:
-            executor.submit(run_in_thread).result()
+        asyncio.run(self._download_tiles_async(tms_url, tiles))
 
     def _fetch_tms_url(self) -> str | None:
         """Query STAC API and extract TMS URL from metadata.
@@ -357,8 +381,10 @@ class OpenAerialMap(RasterDataset):
             )
             response.raise_for_status()
             data = response.json()
-        except Exception as e:
+        except requests.RequestException as e:
             raise RuntimeError(f'Failed to query STAC API: {e}') from e
+        except (ValueError, KeyError) as e:
+            raise RuntimeError(f'Invalid STAC API response: {e}') from e
 
         features = data.get('features', [])
         if not features:
@@ -388,7 +414,9 @@ class OpenAerialMap(RasterDataset):
             source=visual_source,
         )
 
-    async def _download_tiles_async(self, tms_url: str, tiles: list[Any]) -> None:
+    async def _download_tiles_async(
+        self, tms_url: str, tiles: list[TileUtils.Tile]
+    ) -> None:
         """Download tiles asynchronously with progress bar.
 
         Args:
@@ -402,7 +430,7 @@ class OpenAerialMap(RasterDataset):
         for i, task in enumerate(asyncio.as_completed(tasks), 1):
             await task
 
-    async def _download_single_tile(self, tms_url: str, tile: Any) -> None:
+    async def _download_single_tile(self, tms_url: str, tile: TileUtils.Tile) -> None:
         """Download and georeference a single tile.
 
         Args:
@@ -416,7 +444,17 @@ class OpenAerialMap(RasterDataset):
         filepath = os.path.join(root, filename)
 
         if os.path.exists(filepath):
-            return
+            # it is possible download might be corrupted, so verify georeferencing
+            is_valid = False
+            try:
+                with rasterio.open(filepath) as ds:
+                    is_valid = ds.crs is not None
+            except (rasterio.errors.RasterioIOError, OSError):
+                is_valid = False
+
+            if is_valid:
+                return
+            os.unlink(filepath)
 
         try:
             response = await asyncio.to_thread(requests.get, url, timeout=30)
@@ -435,7 +473,7 @@ class OpenAerialMap(RasterDataset):
         except (requests.RequestException, OSError) as e:
             warnings.warn(f'Error downloading tile {tile}: {e}', UserWarning)
 
-    def _georeference_tile(self, filepath: str, tile: Any) -> None:
+    def _georeference_tile(self, filepath: str, tile: TileUtils.Tile) -> None:
         """Add georeferencing metadata to a downloaded tile.
 
         This sets the CRS to EPSG:4326 because mercantile bounds are lat/lon.

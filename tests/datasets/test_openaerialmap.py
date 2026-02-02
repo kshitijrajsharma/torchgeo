@@ -24,6 +24,88 @@ from torchgeo.datasets import (
 from torchgeo.datasets.openaerialmap import TileUtils
 
 
+class TestTileUtils:
+    def test_tile_basic(self) -> None:
+        tile = TileUtils.tile(0.0, 0.0, 0)
+        assert tile.x == 0
+        assert tile.y == 0
+        assert tile.z == 0
+
+    def test_tile_positive_coords(self) -> None:
+        tile = TileUtils.tile(10.0, 20.0, 5)
+        assert 0 <= tile.x < 2**5
+        assert 0 <= tile.y < 2**5
+        assert tile.z == 5
+
+    def test_tile_negative_coords(self) -> None:
+        tile = TileUtils.tile(-10.0, -20.0, 5)
+        assert 0 <= tile.x < 2**5
+        assert 0 <= tile.y < 2**5
+        assert tile.z == 5
+
+    def test_tile_with_truncate(self) -> None:
+        tile = TileUtils.tile(200.0, 100.0, 10, truncate=True)
+        assert 0 <= tile.x < 2**10
+        assert 0 <= tile.y < 2**10
+
+    def test_tile_corners(self) -> None:
+        tile_nw = TileUtils.tile(-180.0, 85.0, 1)
+        tile_se = TileUtils.tile(180.0, -85.0, 1)
+        assert tile_nw.x == 0
+        assert tile_se.x == 1
+
+    def test_bounds_basic(self) -> None:
+        tile = TileUtils.Tile(0, 0, 1)
+        bounds = TileUtils.bounds(tile)
+        assert bounds.west == -180.0
+        assert bounds.east == 0.0
+        assert bounds.north > 0
+        assert bounds.south < bounds.north
+
+    def test_bounds_roundtrip(self) -> None:
+        original_tile = TileUtils.Tile(10, 15, 8)
+        bounds = TileUtils.bounds(original_tile)
+        center_lng = (bounds.west + bounds.east) / 2
+        center_lat = (bounds.north + bounds.south) / 2
+        result_tile = TileUtils.tile(center_lng, center_lat, 8)
+        assert result_tile == original_tile
+
+    def test_tiles_basic(self) -> None:
+        tiles = list(TileUtils.tiles(-1, -1, 1, 1, 0))
+        assert len(tiles) == 1
+        assert tiles[0].z == 0
+
+    def test_tiles_multiple(self) -> None:
+        tiles = list(TileUtils.tiles(-10, -10, 10, 10, 2))
+        assert len(tiles) > 1
+        assert all(t.z == 2 for t in tiles)
+
+    def test_tiles_with_truncate(self) -> None:
+        tiles = list(TileUtils.tiles(-200, -100, 200, 100, 1, truncate=True))
+        assert len(tiles) > 0
+        assert all(0 <= t.x < 2**1 for t in tiles)
+        assert all(0 <= t.y < 2**1 for t in tiles)
+
+    def test_tiles_antimeridian(self) -> None:
+        tiles = list(TileUtils.tiles(175, -5, -175, 5, 2))
+        assert len(tiles) > 0
+        x_values = [t.x for t in tiles]
+        assert min(x_values) == 0 or max(x_values) == 3
+
+    def test_tiles_web_mercator_limits(self) -> None:
+        tiles = list(TileUtils.tiles(-180, -90, 180, 90, 0, truncate=True))
+        assert len(tiles) == 1
+
+    def test_tiles_high_zoom(self) -> None:
+        tiles = list(TileUtils.tiles(0, 0, 0.1, 0.1, 19))
+        assert len(tiles) > 0
+        assert all(t.z == 19 for t in tiles)
+
+    def test_tiles_identical_bounds(self) -> None:
+        tiles = list(TileUtils.tiles(10.0, 20.0, 10.0, 20.0, 5))
+        assert len(tiles) == 1
+
+
 class TestOpenAerialMap:
     @pytest.fixture
     def dataset(self) -> OpenAerialMap:
@@ -191,7 +273,7 @@ class TestOpenAerialMap:
 
         assert (tmp_path / '.downloaded').exists()
 
-    def test_download_image_id_no_bbox_warning(
+    def test_download_image_id_no_bbox_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         mock_response = MagicMock()
@@ -210,9 +292,8 @@ class TestOpenAerialMap:
             MagicMock(return_value=mock_response),
         )
 
-        with pytest.warns(UserWarning, match='Bounding box .* is required'):
-            with pytest.raises(DatasetNotFoundError):
-                OpenAerialMap(tmp_path, image_id='test_id', download=True)
+        with pytest.raises(ValueError, match='Bounding box .* is required'):
+            OpenAerialMap(tmp_path, image_id='test_id', download=True)
 
     def test_fetch_tms_url_variations(
         self,
@@ -244,11 +325,7 @@ class TestOpenAerialMap:
             dataset._fetch_tms_url()
 
         mock_post.side_effect = ValueError('JSON error')
-        with pytest.raises(RuntimeError, match='Failed to query STAC API'):
-            dataset._fetch_tms_url()
-
-        mock_post.side_effect = Exception('General error')
-        with pytest.raises(RuntimeError, match='Failed to query STAC API'):
+        with pytest.raises(RuntimeError, match='Invalid STAC API response'):
             dataset._fetch_tms_url()
 
     def test_download_tiles_async(
@@ -308,6 +385,11 @@ class TestOpenAerialMap:
             filepath.touch()
             mock_requests = MagicMock()
             monkeypatch.setattr('requests.get', mock_requests)
+
+            mock_ds = MagicMock()
+            mock_ds.crs = MagicMock()
+            mock_open = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_ds)))
+            monkeypatch.setattr('rasterio.open', mock_open)
 
             await dataset._download_single_tile('url', tile)
             assert mock_requests.call_count == 0
