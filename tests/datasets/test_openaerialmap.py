@@ -5,7 +5,8 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import MagicMock
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -244,14 +245,13 @@ class TestOpenAerialMap:
             MagicMock(return_value=mock_response),
         )
 
-        mock_download_tiles = AsyncMock()
+        mock_download = MagicMock()
         monkeypatch.setattr(
-            'torchgeo.datasets.openaerialmap.OpenAerialMap._download_tiles_async',
-            mock_download_tiles,
+            'torchgeo.datasets.openaerialmap.OpenAerialMap._download', mock_download
         )
 
         OpenAerialMap(tmp_path, bbox=mock_bbox, zoom=19, download=True)
-        assert mock_download_tiles.called
+        assert mock_download.called
 
     def test_download_no_tms(
         self,
@@ -267,7 +267,7 @@ class TestOpenAerialMap:
             MagicMock(return_value=mock_response),
         )
 
-        with pytest.warns(UserWarning, match='No TMS imagery found'):
+        with pytest.warns(UserWarning, match='No imagery found'):
             with pytest.raises(DatasetNotFoundError):
                 OpenAerialMap(tmp_path, bbox=mock_bbox, download=True)
 
@@ -276,26 +276,51 @@ class TestOpenAerialMap:
     def test_download_image_id_no_bbox_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_stac_response = MagicMock()
+        mock_stac_response.status_code = 200
+        mock_stac_response.json.return_value = {
             'features': [
                 {
-                    'id': 'id',
+                    'id': 'test_id',
+                    'collection': 'test_collection',
                     'properties': {},
-                    'assets': {'visual': {'href': 'http://s'}},
+                    'assets': {'visual': {'href': 'http://example.com/image.tif'}},
                 }
             ]
         }
+
+        mock_tiles_response = MagicMock()
+        mock_tiles_response.status_code = 200
+        mock_tiles_response.json.return_value = {
+            'tilesets': [
+                {
+                    'links': [
+                        {
+                            'rel': 'tile',
+                            'href': 'http://example.com/WebMercatorQuad/{z}/{x}/{y}',
+                        }
+                    ]
+                }
+            ]
+        }
+
+        def mock_requests_func(url: str, **kwargs: Any) -> MagicMock:
+            if 'search' in url:
+                return mock_stac_response
+            else:
+                return mock_tiles_response
+
         monkeypatch.setattr(
-            'torchgeo.datasets.openaerialmap.requests.post',
-            MagicMock(return_value=mock_response),
+            'torchgeo.datasets.openaerialmap.requests.post', mock_requests_func
+        )
+        monkeypatch.setattr(
+            'torchgeo.datasets.openaerialmap.requests.get', mock_requests_func
         )
 
-        with pytest.raises(ValueError, match='bbox'):
+        with pytest.raises(ValueError, match='is required to calculate tiles'):
             OpenAerialMap(tmp_path, image_id='test_id', download=True)
 
-    def test_fetch_tms_url_variations(
+    def test_fetch_item_id_variations(
         self,
         dataset: OpenAerialMap,
         mock_bbox: tuple[float, float, float, float],
@@ -303,30 +328,43 @@ class TestOpenAerialMap:
     ) -> None:
         dataset.bbox = mock_bbox
         dataset.image_id = None
-        dataset.tile_size = 512
 
         mock_post = MagicMock()
+        mock_get = MagicMock()
         monkeypatch.setattr('torchgeo.datasets.openaerialmap.requests.post', mock_post)
+        monkeypatch.setattr('torchgeo.datasets.openaerialmap.requests.get', mock_get)
 
         mock_post.return_value.json.return_value = {
-            'features': [{'properties': {}, 'assets': {'visual': {'href': 'src'}}}]
+            'features': [
+                {'id': 'test_id', 'collection': 'openaerialmap', 'properties': {}}
+            ]
         }
-        url = dataset._fetch_tms_url()
-        assert url is not None
-        assert '@2x' in url
+        mock_get.return_value.json.return_value = {
+            'tilesets': [
+                {
+                    'links': [
+                        {
+                            'rel': 'tile',
+                            'href': 'http://api/raster/collections/openaerialmap/items/test_id/tiles/WebMercatorQuad/{z}/{x}/{y}',
+                        }
+                    ]
+                }
+            ]
+        }
+        result = dataset._fetch_item_id()
+        assert result is not None
+        assert 'WebMercatorQuad' in result
 
-        mock_post.return_value.json.return_value = {
-            'features': [{'properties': {}, 'assets': {}}]
-        }
-        assert dataset._fetch_tms_url() is None
+        mock_post.return_value.json.return_value = {'features': []}
+        assert dataset._fetch_item_id() is None
 
         mock_post.side_effect = requests.RequestException('Fail')
         with pytest.raises(RuntimeError, match='Failed to query STAC API'):
-            dataset._fetch_tms_url()
+            dataset._fetch_item_id()
 
         mock_post.side_effect = ValueError('JSON error')
         with pytest.raises(RuntimeError, match='Invalid STAC API response'):
-            dataset._fetch_tms_url()
+            dataset._fetch_item_id()
 
     def test_download_tiles_async(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -393,7 +431,7 @@ class TestOpenAerialMap:
             )
             monkeypatch.setattr('rasterio.open', mock_open)
 
-            await dataset._download_single_tile('url', tile)
+            await dataset._download_single_tile('url/{z}/{x}/{y}', tile)
             assert mock_requests.call_count == 0
 
             filepath.unlink()
@@ -403,11 +441,11 @@ class TestOpenAerialMap:
             mock_requests.return_value = mock_response_404
 
             with pytest.warns(UserWarning, match='Failed to download tile'):
-                await dataset._download_single_tile('url', tile)
+                await dataset._download_single_tile('url/{z}/{x}/{y}', tile)
 
             mock_requests.side_effect = requests.RequestException('Net error')
             with pytest.warns(UserWarning, match='Error downloading tile'):
-                await dataset._download_single_tile('url', tile)
+                await dataset._download_single_tile('url/{z}/{x}/{y}', tile)
 
         asyncio.run(wrapper())
 

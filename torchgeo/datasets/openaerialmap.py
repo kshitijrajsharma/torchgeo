@@ -9,6 +9,7 @@ import os
 import warnings
 from collections import namedtuple
 from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar, Literal, cast
 
 import matplotlib.pyplot as plt
@@ -195,10 +196,8 @@ class OpenAerialMap(RasterDataset):
     * https://openaerialmap.org/
     """
 
-    _stac_api_url: ClassVar[str] = 'https://api.imagery.hotosm.org/stac'
-    _tile_source_url: ClassVar[str] = (
-        'https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{z}/{x}/{y}@{scale}x?url={source}'
-    )
+    _stac_url: ClassVar[str] = 'https://api.imagery.hotosm.org/stac'
+    _tiles_url: ClassVar[str] = 'https://api.imagery.hotosm.org/raster'
 
     filename_glob = 'OAM-*.tif'
 
@@ -272,11 +271,10 @@ class OpenAerialMap(RasterDataset):
         if download:
             if bbox is None and image_id is None:
                 raise ValueError('bbox or image_id must be provided when download=True')
-            if not 6 <= zoom <= 22:
-                raise ValueError(f'zoom must be between 6 and 22, got {zoom}')
+            if not 15 <= zoom <= 23:
+                raise ValueError(f'zoom must be between 15 and 23, got {zoom}')
             self._download()
             print('Download complete.')
-
         # If 'crs' is None, it defaults to EPSG:3857 (Web Mercator), because 3857 makes logical sense for tiles and web maps.
         super().__init__(
             paths, crs or CRS.from_epsg(3857), res, transforms=transforms, cache=cache
@@ -287,7 +285,7 @@ class OpenAerialMap(RasterDataset):
         assert self.bbox is not None
         try:
             resp = requests.post(
-                f'{self._stac_api_url}/search',
+                f'{self._stac_url}/search',
                 json={'bbox': list(self.bbox), 'limit': self.max_items},
                 headers={'User-Agent': 'torchgeo'},
                 timeout=30,
@@ -337,37 +335,47 @@ class OpenAerialMap(RasterDataset):
         if isinstance(root, (str, os.PathLike)):
             os.makedirs(root, exist_ok=True)
 
-        tms_url = self._fetch_tms_url()
-        if not tms_url:
+        result = self._fetch_item_id()
+        if not result:
             warnings.warn(
-                f'No TMS imagery found for bbox {self.bbox} or ID {self.image_id}. '
+                f'No imagery found for bbox {self.bbox} or ID {self.image_id}. '
                 'Try a different area or check OpenAerialMap coverage.',
                 UserWarning,
                 stacklevel=2,
             )
-            # create placeholder to avoid DatasetNotFoundError
             with open(os.path.join(root, '.downloaded'), 'w') as f:
-                f.write('Download attempted but no TMS URLs found.\n')
+                f.write('Download attempted but no imagery found.\n')
             return
+
+        tiles_url = result
 
         if self.bbox is None:
             raise ValueError(
                 'Bounding box (bbox) is required to calculate tiles. '
                 'Please provide a bbox when initializing OpenAerialMap, even when image_id is provided.'
             )
-
         # we use truncate=True to avoid tiles outside the bbox, just to make sure there won't be corner tiles
         tiles = list(TileUtils.tiles(*self.bbox, self.zoom, truncate=True))
 
-        asyncio.run(self._download_tiles_async(tms_url, tiles))
+        # copilot might suggest this is repeated but to avoid event loop already running error we run in a separate thread just to be in safe side
+        def run_in_thread() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._download_tiles_async(tiles_url, tiles))
+            finally:
+                loop.close()
 
-    def _fetch_tms_url(self) -> str | None:
-        """Query STAC API and extract TMS URL from metadata.
+        with ThreadPoolExecutor() as executor:
+            executor.submit(run_in_thread).result()
+
+    def _fetch_item_id(self) -> str | None:
+        """Query STAC API and extract tiles URL.
 
         Combines logic for ID-based and BBox-based queries.
 
         Returns:
-            TMS URL template from the specific imagery, or None if not found
+            tiles_url_template, or None if not found
         """
         params: dict[str, Any] = {'limit': self.max_items}
 
@@ -378,7 +386,7 @@ class OpenAerialMap(RasterDataset):
 
         try:
             response = requests.post(
-                f'{self._stac_api_url}/search',
+                f'{self._stac_url}/search',
                 json=params,
                 headers={'User-Agent': 'torchgeo'},
                 timeout=30,
@@ -397,37 +405,53 @@ class OpenAerialMap(RasterDataset):
         # Use the first feature available, because it is the most recent
         feature = features[0]
         props = feature.get('properties', {})
-        visual_source = feature.get('assets', {}).get('visual', {}).get('href')
+        item_id: str | None = feature.get('id')
+        collection_id: str | None = feature.get('collection')
+
+        if not item_id or not collection_id:
+            return None
 
         print(f'Using OpenAerialMap image: {props.get("title", "Unknown")}')
-        print(f'  ID: {feature.get("id", "Unknown")}')
+        print(f'  ID: {item_id}')
+        print(f'  Collection: {collection_id}')
         print(f'  Date: {props.get("start_datetime", "Unknown")}')
         print(f'  Platform: {props.get("oam:platform_type", "Unknown")}')
         print(f'  Provider: {props.get("oam:producer_name", "Unknown")}')
         print(f'  GSD: {props.get("gsd", "Unknown")}')
         print(f'  License: {props.get("license", "Unknown")}')
 
-        if not visual_source:
-            return None
+        try:
+            tiles_response = requests.get(
+                f'{self._tiles_url}/collections/{collection_id}/items/{item_id}/tiles',
+                headers={'User-Agent': 'torchgeo'},
+                timeout=30,
+            )
+            tiles_response.raise_for_status()
+            tiles_data = tiles_response.json()
+        except requests.RequestException as e:
+            raise RuntimeError(f'Failed to query tiles endpoint: {e}') from e
 
-        return self._tile_source_url.format(
-            z='{z}',
-            x='{x}',
-            y='{y}',
-            scale=int(self.tile_size / 256),
-            source=visual_source,
-        )
+        tilesets = tiles_data.get('tilesets', [])
+        for tileset in tilesets:
+            links = tileset.get('links', [])
+            for link in links:
+                if link.get('rel') == 'tile':
+                    tile_url: str = link.get('href', '')
+                    if 'WebMercatorQuad' in tile_url:
+                        return tile_url
+
+        raise RuntimeError('WebMercatorQuad tileset not found in API response')
 
     async def _download_tiles_async(
-        self, tms_url: str, tiles: list[TileUtils.Tile]
+        self, tiles_url: str, tiles: list[TileUtils.Tile]
     ) -> None:
         """Download tiles asynchronously with progress bar.
 
         Args:
-            tms_url: TMS URL template with {z}, {x}, {y} placeholders
+            tiles_url: URL template for tiles
             tiles: List of mercantile tiles to download
         """
-        tasks = [self._download_single_tile(tms_url, tile) for tile in tiles]
+        tasks = [self._download_single_tile(tiles_url, tile) for tile in tiles]
         total = len(tasks)
         print(f'Starting download of {total} tiles...')
 
@@ -435,21 +459,25 @@ class OpenAerialMap(RasterDataset):
             await task
         print(f'Finished downloading {total} tiles.')
 
-    async def _download_single_tile(self, tms_url: str, tile: TileUtils.Tile) -> None:
+    async def _download_single_tile(self, tiles_url: str, tile: TileUtils.Tile) -> None:
         """Download and georeference a single tile.
 
         Args:
-            tms_url: TMS URL template
+            tiles_url: URL template for tiles
             tile: mercantile tile to download
         """
         root = cast(str | os.PathLike[str], self.paths)
 
-        url = tms_url.format(z=tile.z, x=tile.x, y=tile.y)
+        url = (
+            tiles_url.replace('{z}', str(tile.z))
+            .replace('{x}', str(tile.x))
+            .replace('{y}', str(tile.y))
+        )
+        url += '?assets=visual'
         filename = f'OAM-{tile.x}-{tile.y}-{tile.z}.tif'
         filepath = os.path.join(root, filename)
 
         if os.path.exists(filepath):
-            # it is possible download might be corrupted, so verify georeferencing
             is_valid = False
             try:
                 with rasterio.open(filepath) as ds:
