@@ -186,6 +186,11 @@ Open Buildings
 
 .. autoclass:: OpenBuildings
 
+OpenAerialMap
+^^^^^^^^^^^^^
+
+.. autoclass:: OpenAerialMap
+
 OpenStreetMap
 ^^^^^^^^^^^^^
 

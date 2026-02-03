@@ -126,6 +126,7 @@ from .naip import NAIP
 from .nasa_marine_debris import NASAMarineDebris
 from .nccm import NCCM
 from .nlcd import NLCD
+from .openaerialmap import OpenAerialMap
 from .openbuildings import OpenBuildings
 from .openstreetmap import OpenStreetMap
 from .oscd import OSCD, OSCD100
@@ -325,6 +326,7 @@ __all__ = (
     'NASAMarineDebris',
     'NonGeoClassificationDataset',
     'NonGeoDataset',
+    'OpenAerialMap',
     'OpenBuildings',
     'OpenStreetMap',
     'PatternNet',
