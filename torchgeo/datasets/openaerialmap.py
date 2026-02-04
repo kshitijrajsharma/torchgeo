@@ -217,7 +217,7 @@ class OpenAerialMap(RasterDataset):
         download: bool = False,
         search: bool = False,
         image_id: str | None = None,
-        tile_size: Literal[256, 512, 768, 1024] = 256,
+        tile_size: Literal[256, 512] = 256,
     ) -> None:
         """Initialize a new OpenAerialMap dataset instance.
 
@@ -244,7 +244,7 @@ class OpenAerialMap(RasterDataset):
             search: if True, query STAC API for available imagery and return results in
                 self.search_results. Skips dataset initialization if download=False.
             image_id: optional STAC item ID to download specific imagery
-            tile_size: size of the tiles to download (supported : 256 , 512, 768, 1024 );
+            tile_size: size of the tiles to download (supported : 256 , 512 );
                 Do verify they exists in the remote image source.
 
         Raises:
@@ -473,6 +473,7 @@ class OpenAerialMap(RasterDataset):
             .replace('{x}', str(tile.x))
             .replace('{y}', str(tile.y))
         )
+        url += f'@{int(self.tile_size / 256)}x'  # resolution of tile changes based on tile size
         url += '?assets=visual'
         filename = f'OAM-{tile.x}-{tile.y}-{tile.z}.tif'
         filepath = os.path.join(root, filename)
