@@ -365,7 +365,7 @@ class TestOpenAerialMap:
         with pytest.raises(RuntimeError, match='Invalid STAC API response'):
             dataset._fetch_item_id()  # type: ignore[reportPrivateUsage]
 
-    def test_download_tiles_async(
+    def test_download_tiles(
         self, dataset: OpenAerialMap, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         dataset.paths = tmp_path
@@ -374,18 +374,17 @@ class TestOpenAerialMap:
         mock_response.status_code = 200
         mock_response.content = b'fake_tiff_data'
 
-        async def mock_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
-            return mock_response
-
-        monkeypatch.setattr('asyncio.to_thread', mock_to_thread)
+        monkeypatch.setattr(
+            'torchgeo.datasets.openaerialmap.requests.get',
+            MagicMock(return_value=mock_response),
+        )
 
         mock_geo = MagicMock()
         monkeypatch.setattr(dataset, '_georeference_tile', mock_geo)
 
         tile = TileUtils.Tile(x=1, y=1, z=1)
-        filepath = tmp_path / 'OAM-1-1-1.tif'
-        filepath.write_bytes(b'fake_tiff_data')
-        dataset._georeference_tile(str(filepath), tile)  # type: ignore[reportPrivateUsage]
+        tiles_url = 'http://example.com/{z}/{x}/{y}'
+        dataset._download_tiles(tiles_url, [tile])  # type: ignore[reportPrivateUsage]
 
         assert mock_geo.called
 

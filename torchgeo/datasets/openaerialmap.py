@@ -3,13 +3,12 @@
 
 """OpenAerialMap dataset."""
 
-import asyncio
 import math
 import os
 import warnings
 from collections import namedtuple
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, ClassVar, Literal, cast
 
 import matplotlib.pyplot as plt
@@ -356,18 +355,7 @@ class OpenAerialMap(RasterDataset):
             )
         # we use truncate=True to avoid tiles outside the bbox, just to make sure there won't be corner tiles
         tiles = list(TileUtils.tiles(*self.bbox, self.zoom, truncate=True))
-
-        # copilot might suggest this is repeated but to avoid event loop already running error we run in a separate thread just to be in safe side
-        def run_in_thread() -> None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._download_tiles_async(tiles_url, tiles))
-            finally:
-                loop.close()
-
-        with ThreadPoolExecutor() as executor:
-            executor.submit(run_in_thread).result()
+        self._download_tiles(tiles_url, tiles)
 
     def _fetch_item_id(self) -> str | None:
         """Query STAC API and extract tiles URL.
@@ -442,24 +430,24 @@ class OpenAerialMap(RasterDataset):
 
         raise RuntimeError('WebMercatorQuad tileset not found in API response')
 
-    async def _download_tiles_async(
-        self, tiles_url: str, tiles: list[TileUtils.Tile]
-    ) -> None:
-        """Download tiles asynchronously with progress bar.
+    def _download_tiles(self, tiles_url: str, tiles: list[TileUtils.Tile]) -> None:
+        """Download tiles concurrently using a thread pool.
 
         Args:
             tiles_url: URL template for tiles
-            tiles: List of mercantile tiles to download
+            tiles: List of tiles to download
         """
-        tasks = [self._download_single_tile(tiles_url, tile) for tile in tiles]
-        total = len(tasks)
-        print(f'Starting download of {total} tiles...')
+        print(f'Starting download of {len(tiles)} tiles...')
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(self._download_single_tile, tiles_url, tile): tile
+                for tile in tiles
+            }
+            for future in as_completed(futures):
+                future.result()
+        print(f'Finished downloading {len(tiles)} tiles.')
 
-        for i, task in enumerate(asyncio.as_completed(tasks), 1):
-            await task
-        print(f'Finished downloading {total} tiles.')
-
-    async def _download_single_tile(self, tiles_url: str, tile: TileUtils.Tile) -> None:
+    def _download_single_tile(self, tiles_url: str, tile: TileUtils.Tile) -> None:
         """Download and georeference a single tile.
 
         Args:
@@ -491,9 +479,7 @@ class OpenAerialMap(RasterDataset):
             os.unlink(filepath)
 
         try:
-            response = await asyncio.to_thread(
-                requests.get, url, headers={'User-Agent': 'torchgeo'}, timeout=30
-            )
+            response = requests.get(url, headers={'User-Agent': 'torchgeo'}, timeout=30)
             if response.status_code != 200:
                 warnings.warn(
                     f'Failed to download tile {tile}: HTTP {response.status_code}',
